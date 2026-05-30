@@ -1,0 +1,159 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Company {
+  id                    String    @id @default(uuid())
+  name                  String
+  email                 String?
+  phone                 String?
+  address               String?
+  subscriptionPlan      String    @default("FREE") // "FREE", "STANDARD", "PREMIUM"
+  subscriptionExpiresAt DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  users                 User[]
+  projects              Project[]
+  materials             Material[]
+}
+
+model User {
+  id          String   @id @default(uuid())
+  email       String?  @unique
+  password    String
+  firstName   String
+  lastName    String
+  phone       String?
+  role        String   @default("COMPANY_ADMIN") // "SUPER_ADMIN", "COMPANY_ADMIN", "TEAM_LEADER", "WORKER", "CLIENT"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id])
+
+  assignments ProjectAssignment[]
+  progressLogs ProgressPhoto[]
+}
+
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  address     String?
+  latitude    Float?
+  longitude   Float?
+  startDate   DateTime
+  endDate     DateTime
+  status      String   @default("EN_COURS") // "EN_COURS", "TERMINE", "SUSPENDU"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  assignments ProjectAssignment[]
+  expenses    Expense[]
+  progressLogs ProgressPhoto[]
+  tasks       Task[]
+  movements   MaterialMovement[]
+  documents   Document[]
+}
+
+model ProjectAssignment {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedAt  DateTime @default(now())
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  amount      Float
+  category    String   // "CIMENT", "SABLE", "TRANSPORT", "MAIN_DOEUVRE", "AUTRE"
+  description String
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+model ProgressPhoto {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  photoUrl    String   // Base64 or local server file path
+  type        String   // "AVANT", "APRES", "QUOTIDIEN"
+  comment     String?
+  takenById   String
+  takenBy     User     @relation(fields: [takenById], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model Task {
+  id          String   @id @default(uuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name        String   // "Fondations", "Élévation", "Toiture", "Électricité", "Plomberie", etc.
+  status      String   @default("A_FAIRE") // "A_FAIRE", "EN_COURS", "TERMINE"
+  dueDate     DateTime?
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}
+
+model Material {
+  id            String   @id @default(uuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name          String   // e.g. "Ciment", "Sable"
+  stock         Float    @default(0)
+  minStockAlert Float    @default(5)
+  unit          String   @default("sacs") // "sacs", "tonnes", etc.
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+
+  movements     MaterialMovement[]
+}
+
+model MaterialMovement {
+  id          String   @id @default(uuid())
+  materialId  String
+  material    Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  type        String   // "ENTREE", "SORTIE"
+  quantity    Float
+  reason      String?  // e.g. "Achat", "Utilisé sur chantier"
+  date        DateTime @default(now())
+}
+
+model Document {
+  id              String    @id @default(uuid())
+  projectId       String
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title           String
+  type            String    // "DEVIS", "FACTURE"
+  amount          Float
+  status          String    @default("EN_ATTENTE") // "EN_ATTENTE", "SIGNE", "PAYE"
+  pdfUrl          String?
+  clientSignature String?   // Base64 drawing signature representation
+  signedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model OTPVerification {
+  id        String   @id @default(uuid())
+  phone     String   @unique
+  code      String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
