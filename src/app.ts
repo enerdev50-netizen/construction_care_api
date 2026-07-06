@@ -9,6 +9,7 @@ import expensesRouter from './routes/expenses';
 import materialsRouter from './routes/materials';
 import documentsRouter from './routes/documents';
 import progressRouter from './routes/progress';
+import superadminRouter from './routes/superadmin';
 
 const app = express();
 
@@ -34,5 +35,6 @@ app.use('/expenses', expensesRouter);
 app.use('/materials', materialsRouter);
 app.use('/documents', documentsRouter);
 app.use('/progress', progressRouter);
+app.use('/superadmin', superadminRouter);
 
 export default app;

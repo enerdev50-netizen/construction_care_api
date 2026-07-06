@@ -1,8 +1,10 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import axios from 'axios';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
+import { uploadBase64ToS3 } from '../s3';
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'construction_care_secret_key_12345!';
@@ -27,12 +29,45 @@ router.post('/send-otp', async (req, res) => {
     });
 
     console.log(`\n==================================================`);
-    console.log(`[OTP SMS SIMULATION] Code de sécurité pour ${phone} : ${code}`);
+    console.log(`[OTP SMS LOG] Code de sécurité généré pour ${phone} : ${code}`);
     console.log(`==================================================\n`);
 
+    // Envoi du SMS réel via AfrikSMS
+    const smsUrl = process.env.AFRIK_SMS_URL || 'https://api.afriksms.com/api/web/web_v1/outbounds/send';
+    const apiKey = process.env.AFRIK_SMS_API_KEY;
+    const clientId = process.env.AFRIK_SMS_CLIENT_ID;
+    const senderId = process.env.AFRIK_SMS_SENDER_ID || 'Ratoufa';
+
+    let formattedPhone = phone.trim();
+    if (formattedPhone.startsWith('+')) {
+      formattedPhone = formattedPhone.substring(1);
+    }
+    formattedPhone = formattedPhone.replace(/\s+/g, '');
+
+    const message = `Votre code de validation ConstructCare est : ${code}`;
+
+    if (apiKey && clientId) {
+      try {
+        const smsResponse = await axios.get(smsUrl, {
+          params: {
+            api_id: clientId,
+            api_key: apiKey,
+            to: formattedPhone,
+            msg: message,
+            sender_id: senderId,
+          }
+        });
+        console.log('AfrikSMS API Outbound Response:', smsResponse.data);
+      } catch (smsErr) {
+        console.error('Erreur lors de l\'appel à l\'API AfrikSMS:', smsErr);
+      }
+    } else {
+      console.warn('AfrikSMS credentials non configurés dans le fichier .env - SMS réel sauté.');
+    }
+
     res.json({
-      message: 'Code envoyé avec succès par SMS (simulation).',
-      code, // Renvoyé pour faciliter la validation locale dans l'interface de test
+      message: 'Code envoyé avec succès par SMS.',
+      code, // Renvoyé pour faciliter la validation dans l'interface si besoin
     });
   } catch (err) {
     console.error(err);
@@ -134,6 +169,10 @@ router.post('/register', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    const planConfig = await prisma.subscriptionConfig.findUnique({
+      where: { planName: result.company.subscriptionPlan },
+    });
+
     res.status(201).json({
       token,
       user: {
@@ -141,9 +180,12 @@ router.post('/register', async (req, res) => {
         email: result.user.email,
         firstName: result.user.firstName,
         lastName: result.user.lastName,
+        phone: result.user.phone,
         role: result.user.role,
+        companyId: result.user.companyId,
       },
       company: result.company,
+      planConfig,
     });
   } catch (err: any) {
     console.error(err);
@@ -208,6 +250,10 @@ router.post('/login', async (req, res) => {
       { expiresIn: '24h' }
     );
 
+    const planConfig = user.company
+      ? await prisma.subscriptionConfig.findUnique({ where: { planName: user.company.subscriptionPlan } })
+      : null;
+
     res.json({
       token,
       user: {
@@ -215,10 +261,12 @@ router.post('/login', async (req, res) => {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        phone: user.phone,
         role: user.role,
         companyId: user.companyId,
       },
       company: user.company,
+      planConfig,
     });
   } catch (err: any) {
     console.error(err);
@@ -240,19 +288,37 @@ router.get('/me', authenticateToken as any, async (req: AuthenticatedRequest, re
       return res.status(404).json({ error: 'Utilisateur introuvable.' });
     }
 
+    const planConfig = user.company
+      ? await prisma.subscriptionConfig.findUnique({ where: { planName: user.company.subscriptionPlan } })
+      : null;
+
     res.json({
       user: {
         id: user.id,
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        phone: user.phone,
         role: user.role,
         companyId: user.companyId,
       },
       company: user.company,
+      planConfig,
     });
   } catch (err) {
     res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+// Récupérer toutes les configurations de plans (Public)
+router.get('/plans', async (req, res) => {
+  try {
+    const plans = await prisma.subscriptionConfig.findMany({
+      orderBy: { price: 'asc' },
+    });
+    res.json(plans);
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur lors de la récupération des configurations de plans.' });
   }
 });
 
@@ -262,20 +328,124 @@ router.post('/subscription', authenticateToken as any, async (req: Authenticated
     return res.status(403).json({ error: 'Seul l\'administrateur peut modifier l\'abonnement.' });
   }
 
-  const { plan } = req.body; // "FREE", "STANDARD", "PREMIUM"
-  if (!['FREE', 'STANDARD', 'PREMIUM'].includes(plan)) {
-    return res.status(400).json({ error: 'Plan d\'abonnement invalide.' });
-  }
+  const { plan } = req.body;
 
   try {
+    const planConfig = await prisma.subscriptionConfig.findUnique({
+      where: { planName: plan },
+    });
+
+    if (!planConfig) {
+      return res.status(400).json({ error: 'Plan d\'abonnement invalide.' });
+    }
+
     const updatedCompany = await prisma.company.update({
       where: { id: req.user.companyId! },
       data: { subscriptionPlan: plan },
     });
 
-    res.json({ message: 'Abonnement mis à jour avec succès.', company: updatedCompany });
+    res.json({ message: 'Abonnement mis à jour avec succès.', company: updatedCompany, planConfig });
   } catch (err) {
     res.status(500).json({ error: 'Erreur lors de la mise à jour de l\'abonnement.' });
+  }
+});
+
+// Mettre à jour le profil de l'entreprise (Nom, Email, Téléphone, Adresse, Logo)
+router.put('/company', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user || req.user.role !== 'COMPANY_ADMIN') {
+    return res.status(403).json({ error: 'Seul l\'administrateur de l\'entreprise peut modifier le profil.' });
+  }
+
+  const { name, nif, email, phone, address, logoFile } = req.body;
+
+  if (!name) {
+    return res.status(400).json({ error: 'Le nom de l\'entreprise est obligatoire.' });
+  }
+
+  try {
+    let finalLogoUrl = undefined;
+    if (logoFile && logoFile.startsWith('data:')) {
+      try {
+        finalLogoUrl = await uploadBase64ToS3(logoFile, 'logos');
+      } catch (s3Err) {
+        console.warn('S3 upload error for logo, falling back to base64:', s3Err);
+        finalLogoUrl = logoFile;
+      }
+    }
+
+    const updatedCompany = await prisma.company.update({
+      where: { id: req.user.companyId! },
+      data: {
+        name,
+        nif: nif !== undefined ? nif : undefined,
+        email: email !== undefined ? email : undefined,
+        phone: phone !== undefined ? phone : undefined,
+        address: address !== undefined ? address : undefined,
+        logoUrl: finalLogoUrl !== undefined ? finalLogoUrl : undefined,
+      },
+    });
+
+    res.json({ message: 'Profil de l\'entreprise mis à jour avec succès.', company: updatedCompany });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du profil de l\'entreprise.' });
+  }
+});
+
+// Mettre à jour le profil de l'utilisateur connecté
+router.put('/me', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'Non authentifié.' });
+
+  const userId = req.user.id;
+  const { firstName, lastName, phone, email, password } = req.body;
+
+  if (!firstName || !lastName) {
+    return res.status(400).json({ error: 'Le prénom et le nom sont obligatoires.' });
+  }
+
+  try {
+    const dataToUpdate: any = {
+      firstName,
+      lastName,
+      phone: phone !== undefined ? phone : undefined,
+      email: email !== undefined ? (email && email.trim() !== "" ? email.trim().toLowerCase() : null) : undefined,
+    };
+
+    if (password) {
+      dataToUpdate.password = await bcrypt.hash(password, 10);
+    }
+
+    if (dataToUpdate.email) {
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          email: dataToUpdate.email,
+          NOT: { id: userId },
+        },
+      });
+      if (existingUser) {
+        return res.status(400).json({ error: 'Cette adresse email est déjà utilisée par un autre compte.' });
+      }
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: dataToUpdate,
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        role: true,
+        companyId: true,
+        createdAt: true,
+      },
+    });
+
+    res.json({ message: 'Profil mis à jour avec succès.', user: updatedUser });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du profil.' });
   }
 });
 

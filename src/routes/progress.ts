@@ -1,6 +1,7 @@
 import { Router, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
+import { uploadBase64ToS3 } from '../s3';
 
 const router = Router();
 
@@ -73,10 +74,22 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       }
     }
 
+    // Téléverser l'image vers S3 si elle est encodée en base64
+    let finalPhotoUrl = photoUrl;
+    if (photoUrl.startsWith('data:')) {
+      try {
+        finalPhotoUrl = await uploadBase64ToS3(photoUrl, 'progress');
+        console.log('Progress photo successfully uploaded to S3:', finalPhotoUrl);
+      } catch (s3Err) {
+        console.warn('S3 upload error for progress photo, falling back to base64:', s3Err);
+        finalPhotoUrl = photoUrl;
+      }
+    }
+
     const newLog = await prisma.progressPhoto.create({
       data: {
         projectId,
-        photoUrl, // Contient l'image encodée en Base64 ou un lien
+        photoUrl: finalPhotoUrl,
         type,
         comment,
         takenById: req.user?.id!,

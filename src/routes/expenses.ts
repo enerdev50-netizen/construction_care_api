@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
+import { uploadBase64ToS3 } from '../s3';
+import { syncDevisStatus } from '../devis_sync';
 
 const router = Router();
 
@@ -15,6 +17,9 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
         project: {
           companyId: companyId!,
           id: projectId ? String(projectId) : undefined,
+          assignments: req.user?.role === 'CLIENT' ? {
+            some: { userId: req.user.id }
+          } : undefined,
         },
       },
       include: {
@@ -35,14 +40,17 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
 // Ajouter une nouvelle dépense
 router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
-  const { projectId, amount, category, description, date } = req.body;
+  const { projectId, amount, category, description, date, beneficiaryId, devisId, receiptFile } = req.body;
 
   if (!projectId || !amount || !category || !description) {
     return res.status(400).json({ error: 'Champs obligatoires manquants.' });
   }
 
-  if (!['CIMENT', 'SABLE', 'TRANSPORT', 'MAIN_DOEUVRE', 'AUTRE'].includes(category)) {
-    return res.status(400).json({ error: 'Catégorie de dépense invalide.' });
+  const expenseDate = date ? new Date(date) : new Date();
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  if (expenseDate > today) {
+    return res.status(400).json({ error: 'La date de la dépense ne peut pas être dans le futur.' });
   }
 
   try {
@@ -55,15 +63,44 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
       return res.status(404).json({ error: 'Chantier introuvable.' });
     }
 
+    let finalReceiptUrl = null;
+    if (receiptFile && receiptFile.startsWith('data:')) {
+      try {
+        finalReceiptUrl = await uploadBase64ToS3(receiptFile, 'receipts');
+      } catch (s3Err) {
+        console.warn('S3 upload error for expense receipt, falling back to base64:', s3Err);
+        finalReceiptUrl = receiptFile;
+      }
+    }
+
     const expense = await prisma.expense.create({
       data: {
         projectId,
         amount: parseFloat(amount),
         category,
         description,
-        date: date ? new Date(date) : new Date(),
+        date: expenseDate,
+        beneficiaryId: beneficiaryId || null,
+        devisId: devisId || null,
+        receiptUrl: finalReceiptUrl,
       },
     });
+
+    // Créer automatiquement le document facture correspondant au statut EN_ATTENTE
+    const docTitle = `Facture : ${expense.description}`;
+    await prisma.document.create({
+      data: {
+        projectId: expense.projectId,
+        title: docTitle,
+        type: 'FACTURE',
+        amount: expense.amount,
+        paidAmount: 0,
+        status: 'EN_ATTENTE',
+        devisId: expense.devisId,
+      }
+    });
+
+    await syncDevisStatus(expense.devisId);
 
     res.status(201).json(expense);
   } catch (err) {
@@ -153,10 +190,197 @@ router.delete('/:id', authenticateToken as any, async (req: AuthenticatedRequest
       return res.status(404).json({ error: 'Dépense introuvable.' });
     }
 
+    // Supprimer également le document FACTURE correspondant si présent
+    const docTitle = `Facture : ${expense.description}`;
+    await prisma.document.deleteMany({
+      where: {
+        projectId: expense.projectId,
+        title: docTitle,
+        type: 'FACTURE',
+      }
+    });
+
     await prisma.expense.delete({ where: { id: expenseId } });
     res.json({ message: 'Dépense supprimée avec succès.' });
   } catch (err) {
     res.status(500).json({ error: 'Erreur lors de la suppression de la dépense.' });
+  }
+});
+
+// Modifier une dépense
+router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const companyId = req.user?.companyId;
+  const expenseId = req.params.id;
+  const { amount, category, description, date, beneficiaryId, devisId, receiptFile } = req.body;
+
+  try {
+    const existingExpense = await prisma.expense.findFirst({
+      where: {
+        id: expenseId,
+        project: { companyId: companyId ?? undefined },
+      },
+    });
+
+    if (!existingExpense) {
+      return res.status(404).json({ error: 'Dépense introuvable.' });
+    }
+
+    let expenseDate = undefined;
+    if (date !== undefined) {
+      expenseDate = date ? new Date(date) : new Date();
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (expenseDate > today) {
+        return res.status(400).json({ error: 'La date de la dépense ne peut pas être dans le futur.' });
+      }
+    }
+
+    let finalReceiptUrl = existingExpense.receiptUrl;
+    if (receiptFile && receiptFile.startsWith('data:')) {
+      try {
+        finalReceiptUrl = await uploadBase64ToS3(receiptFile, 'receipts');
+      } catch (s3Err) {
+        console.warn('S3 upload error for expense receipt, falling back to base64:', s3Err);
+        finalReceiptUrl = receiptFile;
+      }
+    }
+
+    const updated = await prisma.expense.update({
+      where: { id: expenseId },
+      data: {
+        amount: amount !== undefined ? parseFloat(amount) : undefined,
+        category: category !== undefined ? category : undefined,
+        description: description !== undefined ? description : undefined,
+        date: expenseDate !== undefined ? expenseDate : undefined,
+        beneficiaryId: beneficiaryId !== undefined ? (beneficiaryId || null) : undefined,
+        devisId: devisId !== undefined ? (devisId || null) : undefined,
+        receiptUrl: finalReceiptUrl,
+      },
+    });
+
+    // Mettre à jour le document FACTURE correspondant si présent
+    const oldDocTitle = `Facture : ${existingExpense.description}`;
+    const newDocTitle = `Facture : ${description !== undefined ? description : existingExpense.description}`;
+    await prisma.document.updateMany({
+      where: {
+        projectId: existingExpense.projectId,
+        title: oldDocTitle,
+        type: 'FACTURE',
+      },
+      data: {
+        title: newDocTitle,
+        amount: amount !== undefined ? parseFloat(amount) : undefined,
+        devisId: devisId !== undefined ? (devisId || null) : undefined,
+      }
+    });
+
+    await syncDevisStatus(existingExpense.devisId);
+    if (updated.devisId !== existingExpense.devisId) {
+      await syncDevisStatus(updated.devisId);
+    }
+
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour de la dépense.' });
+  }
+});
+
+// Mettre à jour le statut d'une dépense (ex: marquer comme PAYE ou PAYE_CLIENT)
+router.put('/:id/status', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const expenseId = req.params.id;
+  const { status, paidAmount } = req.body;
+  const companyId = req.user?.companyId;
+
+  if (!status) {
+    return res.status(400).json({ error: 'Le statut est requis.' });
+  }
+
+  if (!['EN_ATTENTE', 'PAYE_CLIENT', 'PAYE'].includes(status)) {
+    return res.status(400).json({ error: 'Statut invalide.' });
+  }
+
+  // Contrôle de Rôle : le client ne peut que déclarer son paiement, pas le valider.
+  if (req.user?.role === 'CLIENT' && status === 'PAYE') {
+    return res.status(403).json({ error: 'Seul le gérant peut valider le paiement.' });
+  }
+
+  try {
+    const expense = await prisma.expense.findFirst({
+      where: {
+        id: expenseId,
+        project: { companyId: companyId ?? undefined },
+      },
+    });
+
+    if (!expense) {
+      return res.status(404).json({ error: 'Dépense introuvable ou non autorisée.' });
+    }
+
+    const amountVal = expense.amount;
+    let finalPaidAmount = 0;
+    let docStatus = 'EN_ATTENTE';
+
+    if (status === 'PAYE') {
+      const valPaid = paidAmount !== undefined ? parseFloat(paidAmount) : amountVal;
+      finalPaidAmount = Math.min(valPaid, amountVal);
+      docStatus = finalPaidAmount < amountVal ? 'PAYE_PARTIEL' : 'PAYE';
+    } else if (status === 'PAYE_CLIENT') {
+      docStatus = 'PAYE_CLIENT';
+      finalPaidAmount = 0;
+    } else if (status === 'EN_ATTENTE') {
+      docStatus = 'EN_ATTENTE';
+      finalPaidAmount = 0;
+    }
+
+    // Mettre à jour le statut de la dépense en fonction du statut du paiement (PAYE ou PAYE_PARTIEL)
+    const updatedExpense = await prisma.expense.update({
+      where: { id: expenseId },
+      data: { status: docStatus },
+    });
+
+    // Synchronisation / Création du document facture correspondant pour la comptabilité et portail client
+    const docTitle = `Facture : ${updatedExpense.description}`;
+    
+    // Rechercher si une facture associée existe déjà
+    const existingDoc = await prisma.document.findFirst({
+      where: {
+        projectId: updatedExpense.projectId,
+        title: docTitle,
+        type: 'FACTURE',
+      }
+    });
+
+    if (existingDoc) {
+      await prisma.document.update({
+        where: { id: existingDoc.id },
+        data: {
+          amount: amountVal,
+          paidAmount: finalPaidAmount,
+          status: docStatus,
+          devisId: updatedExpense.devisId,
+        }
+      });
+    } else {
+      await prisma.document.create({
+        data: {
+          projectId: updatedExpense.projectId,
+          title: docTitle,
+          type: 'FACTURE',
+          amount: amountVal,
+          paidAmount: finalPaidAmount,
+          status: docStatus,
+          devisId: updatedExpense.devisId,
+        }
+      });
+    }
+
+    await syncDevisStatus(updatedExpense.devisId);
+
+    res.json({ message: 'Statut mis à jour avec succès.', expense: updatedExpense });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du statut.' });
   }
 });
 

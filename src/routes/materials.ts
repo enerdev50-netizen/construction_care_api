@@ -154,4 +154,95 @@ router.get('/alerts', authenticateToken as any, async (req: AuthenticatedRequest
   }
 });
 
+// Modifier un matériau
+router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const companyId = req.user?.companyId;
+  const materialId = req.params.id;
+  const { name, minStockAlert, unit, stock } = req.body;
+
+  try {
+    const existingMaterial = await prisma.material.findFirst({
+      where: { id: materialId, companyId: companyId ?? undefined },
+    });
+
+    if (!existingMaterial) {
+      return res.status(404).json({ error: 'Matériau introuvable.' });
+    }
+
+    const updated = await prisma.material.update({
+      where: { id: materialId },
+      data: {
+        name: name !== undefined ? name : undefined,
+        minStockAlert: minStockAlert !== undefined ? parseFloat(minStockAlert) : undefined,
+        unit: unit !== undefined ? unit : undefined,
+        stock: stock !== undefined ? parseFloat(stock) : undefined,
+      },
+    });
+
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du matériau.' });
+  }
+});
+
+// Supprimer un matériau
+router.delete('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const companyId = req.user?.companyId;
+  const materialId = req.params.id;
+
+  try {
+    const existingMaterial = await prisma.material.findFirst({
+      where: { id: materialId, companyId: companyId ?? undefined },
+    });
+
+    if (!existingMaterial) {
+      return res.status(404).json({ error: 'Matériau introuvable.' });
+    }
+
+    await prisma.material.delete({ where: { id: materialId } });
+    res.json({ message: 'Matériau supprimé avec succès.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur lors de la suppression du matériau.' });
+  }
+});
+
+// Supprimer un mouvement de stock et annuler son effet sur le stock global
+router.delete('/movement/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const companyId = req.user?.companyId;
+  const movementId = req.params.id;
+
+  try {
+    const movement = await prisma.materialMovement.findUnique({
+      where: { id: movementId },
+      include: { material: true },
+    });
+
+    if (!movement || (companyId && movement.material.companyId !== companyId)) {
+      return res.status(404).json({ error: 'Mouvement de stock introuvable.' });
+    }
+
+    const qty = movement.quantity;
+    const stockAdjustment = movement.type === 'ENTREE' ? -qty : qty;
+
+    await prisma.$transaction([
+      prisma.material.update({
+        where: { id: movement.materialId },
+        data: {
+          stock: {
+            increment: stockAdjustment,
+          },
+        },
+      }),
+      prisma.materialMovement.delete({
+        where: { id: movementId },
+      }),
+    ]);
+
+    res.json({ message: 'Mouvement supprimé et stock réinitialisé avec succès.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la suppression du mouvement.' });
+  }
+});
+
 export default router;

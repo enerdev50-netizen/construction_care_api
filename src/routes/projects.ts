@@ -24,6 +24,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       projects = await prisma.project.findMany({
         where: { companyId: companyId! },
         include: {
+          company: true,
           assignments: { include: { user: true } },
           tasks: true,
           expenses: true,
@@ -31,15 +32,6 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
       });
     } else if (role === 'CLIENT') {
       // Les clients voient les chantiers dont ils sont le "client"
-      // Wait, let's look at how client is linked.
-      // In the implementation plan, the client relation can be represented by assignments,
-      // or we can query users assigned or match by description/name, or we can check project assignments where user is CLIENT.
-      // Let's allow clients to see projects where they are assigned as CLIENT, or let's create a clientId field on Project?
-      // Wait, in schema.prisma, Project doesn't have a direct clientId field. We can link clients by creating a project assignment,
-      // or we can add a clientId field. Let's see, in the schema.prisma I created above, Project has:
-      // companyId and assignments. So we can assign a CLIENT user to a project using ProjectAssignment.
-      // That's clean because a project can have multiple client representatives if needed, or we can just assign the client to the project.
-      // Let's filter projects where the client is assigned:
       projects = await prisma.project.findMany({
         where: {
           companyId: companyId!,
@@ -48,6 +40,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
           }
         },
         include: {
+          company: true,
           tasks: true,
           expenses: true,
           assignments: { include: { user: true } },
@@ -63,6 +56,7 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
           }
         },
         include: {
+          company: true,
           tasks: true,
           expenses: true,
           assignments: { include: { user: true } },
@@ -94,6 +88,10 @@ router.get('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
           orderBy: { date: 'desc' }
         },
         documents: {
+          include: {
+            expenses: true,
+            factures: true,
+          },
           orderBy: { createdAt: 'desc' }
         },
         progressLogs: {
@@ -146,22 +144,16 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 
     const currentProjectCount = company._count.projects;
     const plan = company.subscriptionPlan;
+    const config = await prisma.subscriptionConfig.findUnique({ where: { planName: plan } });
 
-    if (plan === 'FREE' && currentProjectCount >= 1) {
+    if (config && currentProjectCount >= config.maxProjects) {
       return res.status(403).json({
-        error: 'Limite de chantiers atteinte (Max 1 pour le plan Gratuit). Veuillez passer au plan supérieur.',
+        error: `Limite de chantiers atteinte (Max ${config.maxProjects} pour le plan ${plan}). Veuillez passer au plan supérieur.`,
         limitReached: true,
       });
     }
 
-    if (plan === 'STANDARD' && currentProjectCount >= 10) {
-      return res.status(403).json({
-        error: 'Limite de chantiers atteinte (Max 10 pour le plan Standard). Veuillez passer au plan supérieur.',
-        limitReached: true,
-      });
-    }
-
-    // Créer le chantier, ses tâches par défaut, et assigner le client s'il y en a un
+    // Créer le chantier et assigner le client s'il y en a un
     const project = await prisma.$transaction(async (tx) => {
       const p = await tx.project.create({
         data: {
@@ -176,17 +168,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
         },
       });
 
-      // Création des tâches par défaut
-      const defaultTaskNames = ['Fondations', 'Élévation', 'Toiture', 'Électricité', 'Plomberie'];
-      const tasksData = defaultTaskNames.map(taskName => ({
-        projectId: p.id,
-        name: taskName,
-        status: 'A_FAIRE',
-      }));
 
-      await tx.task.createMany({
-        data: tasksData,
-      });
 
       // Assigner des clients / ouvriers dès le début si fournis
       if (clientIds && Array.isArray(clientIds)) {
@@ -322,6 +304,64 @@ router.put('/:projectId/tasks/:taskId', authenticateToken as any, async (req: Au
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour de la tâche.' });
+  }
+});
+
+// Ajouter une tâche à un chantier
+router.post('/:projectId/tasks', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const { name, dueDate } = req.body;
+  const { projectId } = req.params;
+
+  if (!name) {
+    return res.status(400).json({ error: 'Le nom de la tâche est requis.' });
+  }
+
+  try {
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, companyId: req.user?.companyId! },
+    });
+
+    if (!project && req.user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Accès refusé.' });
+    }
+
+    const newTask = await prisma.task.create({
+      data: {
+        projectId,
+        name,
+        status: 'A_FAIRE',
+        dueDate: dueDate ? new Date(dueDate) : null,
+      },
+    });
+
+    res.status(201).json(newTask);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la création de la tâche.' });
+  }
+});
+
+// Supprimer une tâche d'un chantier
+router.delete('/:projectId/tasks/:taskId', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+  const { projectId, taskId } = req.params;
+
+  try {
+    const project = await prisma.project.findFirst({
+      where: { id: projectId, companyId: req.user?.companyId! },
+    });
+
+    if (!project && req.user?.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'Accès refusé.' });
+    }
+
+    await prisma.task.delete({
+      where: { id: taskId, projectId },
+    });
+
+    res.json({ message: 'Tâche supprimée avec succès.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la suppression de la tâche.' });
   }
 });
 

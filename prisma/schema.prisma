@@ -1,7 +1,6 @@
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "sqlite"
+  url      = "file:./dev.db"
 }
 
 generator client {
@@ -11,9 +10,11 @@ generator client {
 model Company {
   id                    String    @id @default(uuid())
   name                  String
+  nif                   String?   // Numéro d'Identification Fiscale (TVA, etc.)
   email                 String?
   phone                 String?
   address               String?
+  logoUrl               String?   // URL publique du logo stocké dans S3
   subscriptionPlan      String    @default("FREE") // "FREE", "STANDARD", "PREMIUM"
   subscriptionExpiresAt DateTime?
   createdAt             DateTime  @default(now())
@@ -40,6 +41,9 @@ model User {
 
   assignments ProjectAssignment[]
   progressLogs ProgressPhoto[]
+  expenses    Expense[]
+  createdPayments   Payment[] @relation("PaymentCreatedBy")
+  validatedPayments Payment[] @relation("PaymentValidatedBy")
 }
 
 model Project {
@@ -84,6 +88,14 @@ model Expense {
   description String
   date        DateTime @default(now())
   createdAt   DateTime @default(now())
+
+  beneficiaryId String?
+  beneficiary   User?    @relation(fields: [beneficiaryId], references: [id], onDelete: SetNull)
+
+  devisId       String?
+  devis         Document? @relation("DevisExpenses", fields: [devisId], references: [id], onDelete: SetNull)
+  receiptUrl    String?
+  status        String    @default("EN_ATTENTE") // "EN_ATTENTE", "PAYE_CLIENT", "PAYE"
 }
 
 model ProgressPhoto {
@@ -142,12 +154,35 @@ model Document {
   title           String
   type            String    // "DEVIS", "FACTURE"
   amount          Float
+  paidAmount      Float     @default(0)
+  declaredPaidAmount Float? @default(0)
   status          String    @default("EN_ATTENTE") // "EN_ATTENTE", "SIGNE", "PAYE"
   pdfUrl          String?
   clientSignature String?   // Base64 drawing signature representation
   signedAt        DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+
+  devisId         String?
+  devis           Document?   @relation("DevisFactures", fields: [devisId], references: [id], onDelete: SetNull)
+  factures        Document[]  @relation("DevisFactures")
+  expenses        Expense[]   @relation("DevisExpenses")
+  payments        Payment[]
+}
+
+model Payment {
+  id                String   @id @default(uuid())
+  documentId        String
+  document          Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  amount            Float
+  status            String   @default("EN_ATTENTE") // "EN_ATTENTE", "VALIDE"
+  createdAt         DateTime @default(now())
+
+  createdByUserId   String?
+  createdByUser     User?    @relation("PaymentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  validatedByUserId String?
+  validatedByUser   User?    @relation("PaymentValidatedBy", fields: [validatedByUserId], references: [id], onDelete: SetNull)
 }
 
 model OTPVerification {
@@ -156,4 +191,14 @@ model OTPVerification {
   code      String
   expiresAt DateTime
   createdAt DateTime @default(now())
+}
+
+model SubscriptionConfig {
+  planName     String   @id // "FREE", "STANDARD", "PREMIUM"
+  maxProjects  Int
+  maxUsers     Int
+  price        Int      @default(0)
+  durationDays Int      @default(30) // Durée en jours (ex: 30, 90, 365)
+  features     String @default("") // ex: "GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF"
+  updatedAt    DateTime @updatedAt
 }
