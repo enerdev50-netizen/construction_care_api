@@ -28,7 +28,7 @@ async function main() {
         maxUsers: 3,
         price: 0,
         durationDays: 30,
-        features: ['GEOLOCALISATION', 'MATERIAUX', 'DOCUMENTS', 'PDF'],
+        features: 'GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF',
       },
       {
         planName: 'STANDARD',
@@ -36,7 +36,7 @@ async function main() {
         maxUsers: 15,
         price: 5000,
         durationDays: 30,
-        features: ['GEOLOCALISATION', 'MATERIAUX'],
+        features: 'GEOLOCALISATION,MATERIAUX',
       },
       {
         planName: 'PREMIUM',
@@ -44,7 +44,7 @@ async function main() {
         maxUsers: 9999,
         price: 15000,
         durationDays: 30,
-        features: ['GEOLOCALISATION', 'MATERIAUX', 'DOCUMENTS', 'PDF'],
+        features: 'GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF',
       },
     ],
   });

@@ -1,0 +1,93 @@
+name: Build & Deploy (Dokploy)
+
+# Push-to-deploy : chaque push sur une branche d'environnement build l'image,
+# la pousse sur ghcr.io puis déclenche un redeploy de l'application Dokploy.
+#
+#   develop  -> tag "develop" -> app Dokploy DEV
+#   main     -> tag "latest"  -> app Dokploy PRODUCTION
+#
+# Secrets requis (Settings > Secrets and variables > Actions) :
+#   DOKPLOY_URL           ex: https://cloud.efficorpe.com
+#   DOKPLOY_TOKEN         API key Dokploy
+#   DOKPLOY_APP_DEV_ID    applicationId Dokploy (dev)
+#   DOKPLOY_APP_PROD_ID   applicationId Dokploy (production)
+
+on:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/construction-care-api
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Résoudre l'environnement selon la branche
+        id: env
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          case "$REF" in
+            develop) echo "tag=develop" >> "$GITHUB_OUTPUT"; echo "name=develop"    >> "$GITHUB_OUTPUT" ;;
+            main)    echo "tag=latest"  >> "$GITHUB_OUTPUT"; echo "name=production" >> "$GITHUB_OUTPUT" ;;
+            *) echo "Branche non déployable : $REF"; exit 1 ;;
+          esac
+
+      - name: Login ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.env.outputs.tag }}
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Redeploy Dokploy
+        env:
+          REF: ${{ github.ref_name }}
+          ENV_NAME: ${{ steps.env.outputs.name }}
+          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
+          DOKPLOY_TOKEN: ${{ secrets.DOKPLOY_TOKEN }}
+          DEV_ID: ${{ secrets.DOKPLOY_APP_DEV_ID }}
+          PROD_ID: ${{ secrets.DOKPLOY_APP_PROD_ID }}
+        run: |
+          case "$REF" in
+            develop) APP_ID="$DEV_ID" ;;
+            main)    APP_ID="$PROD_ID" ;;
+          esac
+          if [ -z "$APP_ID" ]; then
+            echo "❌ applicationId Dokploy manquant pour $ENV_NAME — renseigne le secret correspondant."
+            exit 1
+          fi
+          echo "▶ Redeploy Dokploy ($ENV_NAME)"
+          curl -sfL "${DOKPLOY_URL}/api/application.redeploy" \
+            -H "Accept: application/json" \
+            -H "x-api-key: ${DOKPLOY_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"applicationId\": \"${APP_ID}\"}"
+          echo "✓ Redeploy déclenché"

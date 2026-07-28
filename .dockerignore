@@ -1,0 +1,16 @@
+node_modules
+dist
+.git
+.gitignore
+.env
+.env.*
+*.db
+*.db-journal
+*.log
+npm-debug.log*
+docker-compose.local.yml
+.agents
+skills-lock.json
+README.md
+DEPLOY.md
+.DS_Store

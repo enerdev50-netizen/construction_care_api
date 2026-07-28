@@ -1,6 +1,6 @@
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "mysql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
@@ -13,8 +13,8 @@ model Company {
   nif                   String?   // Numéro d'Identification Fiscale (TVA, etc.)
   email                 String?
   phone                 String?
-  address               String?
-  logoUrl               String?   // URL publique du logo stocké dans S3
+  address               String?   @db.Text
+  logoUrl               String?   @db.Text // URL publique du logo stocké dans S3
   subscriptionPlan      String    @default("FREE") // "FREE", "STANDARD", "PREMIUM"
   subscriptionExpiresAt DateTime?
   createdAt             DateTime  @default(now())
@@ -49,8 +49,8 @@ model User {
 model Project {
   id          String   @id @default(uuid())
   name        String
-  description String?
-  address     String?
+  description String?  @db.Text
+  address     String?  @db.Text
   latitude    Float?
   longitude   Float?
   startDate   DateTime
@@ -85,7 +85,7 @@ model Expense {
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   amount      Float
   category    String   // "CIMENT", "SABLE", "TRANSPORT", "MAIN_DOEUVRE", "AUTRE"
-  description String
+  description String   @db.Text
   date        DateTime @default(now())
   createdAt   DateTime @default(now())
 
@@ -94,7 +94,7 @@ model Expense {
 
   devisId       String?
   devis         Document? @relation("DevisExpenses", fields: [devisId], references: [id], onDelete: SetNull)
-  receiptUrl    String?
+  receiptUrl    String?   @db.Text
   status        String    @default("EN_ATTENTE") // "EN_ATTENTE", "PAYE_CLIENT", "PAYE"
 }
 
@@ -102,9 +102,9 @@ model ProgressPhoto {
   id          String   @id @default(uuid())
   projectId   String
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  photoUrl    String   // Base64 or local server file path
+  photoUrl    String   @db.LongText // Base64 or local server file path
   type        String   // "AVANT", "APRES", "QUOTIDIEN"
-  comment     String?
+  comment     String?  @db.Text
   takenById   String
   takenBy     User     @relation(fields: [takenById], references: [id])
   createdAt   DateTime @default(now())
@@ -157,8 +157,8 @@ model Document {
   paidAmount      Float     @default(0)
   declaredPaidAmount Float? @default(0)
   status          String    @default("EN_ATTENTE") // "EN_ATTENTE", "SIGNE", "PAYE"
-  pdfUrl          String?
-  clientSignature String?   // Base64 drawing signature representation
+  pdfUrl          String?   @db.Text
+  clientSignature String?   @db.LongText // Base64 drawing signature representation
   signedAt        DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -199,6 +199,7 @@ model SubscriptionConfig {
   maxUsers     Int
   price        Int      @default(0)
   durationDays Int      @default(30) // Durée en jours (ex: 30, 90, 365)
-  features     String @default("") // ex: "GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF"
+  // VarChar et non Text : MySQL interdit une valeur par défaut sur une colonne TEXT
+  features     String   @default("") @db.VarChar(1000) // ex: "GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF"
   updatedAt    DateTime @updatedAt
 }
