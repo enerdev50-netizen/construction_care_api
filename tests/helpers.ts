@@ -39,6 +39,24 @@ export async function cleanupTestData(): Promise<void> {
   await prisma.company.deleteMany({ where: { id: { in: ids } } });
 }
 
+// Garantit la présence des forfaits système, données de référence attendues par l'API
+// (quotas d'abonnement, attribution d'un forfait à une entreprise). Idempotent.
+export async function ensureSystemPlans(): Promise<void> {
+  const plans = [
+    { planName: 'FREE', maxProjects: 1, maxUsers: 3, price: 0 },
+    { planName: 'STANDARD', maxProjects: 10, maxUsers: 15, price: 5000 },
+    { planName: 'PREMIUM', maxProjects: 9999, maxUsers: 9999, price: 15000 },
+  ];
+
+  for (const plan of plans) {
+    await prisma.subscriptionConfig.upsert({
+      where: { planName: plan.planName },
+      update: {},
+      create: { ...plan, durationDays: 30, features: 'GEOLOCALISATION,MATERIAUX' },
+    });
+  }
+}
+
 // Crée une entreprise complète (gérant + chantier + facture) et retourne un token de connexion réel
 export async function createTenant(suffix: string): Promise<Tenant> {
   const hash = await bcrypt.hash(TEST_PASSWORD, 10);
