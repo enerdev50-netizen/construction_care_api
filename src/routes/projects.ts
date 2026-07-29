@@ -19,7 +19,17 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
   try {
     let projects;
 
-    if (role === 'COMPANY_ADMIN') {
+    if (role === 'SUPER_ADMIN') {
+      // Le super-administrateur de la plateforme voit tous les chantiers, toutes entreprises confondues
+      projects = await prisma.project.findMany({
+        include: {
+          company: true,
+          assignments: { include: { user: true } },
+          tasks: true,
+          expenses: true,
+        },
+      });
+    } else if (role === 'COMPANY_ADMIN') {
       // Les admins voient tout
       projects = await prisma.project.findMany({
         where: { companyId: companyId! },
@@ -125,7 +135,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     return res.status(403).json({ error: 'Permissions insuffisantes.' });
   }
 
-  const { name, description, address, latitude, longitude, startDate, endDate, clientIds } = req.body;
+  const { name, description, address, latitude, longitude, startDate, endDate, budget, clientIds } = req.body;
 
   if (!name || !startDate || !endDate) {
     return res.status(400).json({ error: 'Champs obligatoires manquants.' });
@@ -164,6 +174,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
           longitude: longitude ? parseFloat(longitude) : null,
           startDate: new Date(startDate),
           endDate: new Date(endDate),
+          budget: budget != null && budget !== '' ? parseFloat(budget) : null,
           companyId,
         },
       });
@@ -171,14 +182,21 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 
 
       // Assigner des clients / ouvriers dès le début si fournis
-      if (clientIds && Array.isArray(clientIds)) {
-        const assignmentsData = clientIds.map((cId: string) => ({
-          projectId: p.id,
-          userId: cId,
-        }));
-        await tx.projectAssignment.createMany({
-          data: assignmentsData,
+      if (clientIds && Array.isArray(clientIds) && clientIds.length > 0) {
+        // Isolation multi-tenant : ne garder que les utilisateurs appartenant à l'entreprise
+        const validUsers = await tx.user.findMany({
+          where: { id: { in: clientIds }, companyId },
+          select: { id: true },
         });
+        const assignmentsData = validUsers.map((u) => ({
+          projectId: p.id,
+          userId: u.id,
+        }));
+        if (assignmentsData.length > 0) {
+          await tx.projectAssignment.createMany({
+            data: assignmentsData,
+          });
+        }
       }
 
       return p;
@@ -200,7 +218,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const projectId = req.params.id;
-  const { name, description, address, latitude, longitude, startDate, endDate, status } = req.body;
+  const { name, description, address, latitude, longitude, startDate, endDate, status, budget } = req.body;
 
   try {
     const existingProject = await prisma.project.findFirst({
@@ -222,6 +240,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         startDate: startDate !== undefined ? new Date(startDate) : existingProject.startDate,
         endDate: endDate !== undefined ? new Date(endDate) : existingProject.endDate,
         status: status !== undefined ? status : existingProject.status,
+        budget: budget !== undefined ? (budget != null && budget !== '' ? parseFloat(budget) : null) : existingProject.budget,
       },
     });
 
@@ -251,6 +270,12 @@ router.post('/:id/assign', authenticateToken as any, async (req: AuthenticatedRe
       return res.status(404).json({ error: 'Chantier introuvable.' });
     }
 
+    // Isolation multi-tenant : ne conserver que les utilisateurs appartenant à l'entreprise du chantier
+    const validUsers = await prisma.user.findMany({
+      where: { id: { in: userIds }, companyId: project.companyId },
+      select: { id: true },
+    });
+
     // On supprime d'abord les anciennes affectations pour les remplacer ou on ajoute?
     // Remplacer est souvent plus propre pour les formulaires d'édition.
     await prisma.$transaction([
@@ -258,9 +283,9 @@ router.post('/:id/assign', authenticateToken as any, async (req: AuthenticatedRe
         where: { projectId },
       }),
       prisma.projectAssignment.createMany({
-        data: userIds.map((uId: string) => ({
+        data: validUsers.map((u) => ({
           projectId,
-          userId: uId,
+          userId: u.id,
         })),
       }),
     ]);

@@ -3,25 +3,24 @@ import { PrismaClient } from '@prisma/client';
 async function main() {
   const prisma = new PrismaClient();
   try {
-    console.log('Connecting to database...');
-    const schemas: any[] = await prisma.$queryRaw`
-      SELECT nspname AS schema_name, count(*) AS table_count
-      FROM pg_catalog.pg_class c
-      JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-      WHERE c.relkind = 'r' AND nspname NOT IN ('pg_catalog', 'information_schema')
-      GROUP BY nspname
-    `;
-    console.log('Available schemas and table counts:', schemas);
+    console.log('Connexion à la base de données...');
 
-    const tables: any[] = await prisma.$queryRaw`
-      SELECT schemaname, tablename 
-      FROM pg_catalog.pg_tables 
-      WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
-      ORDER BY schemaname, tablename
+    const [{ db }] = await prisma.$queryRaw<{ db: string }[]>`SELECT DATABASE() AS db`;
+    console.log('Base courante :', db);
+
+    const tables = await prisma.$queryRaw<{ table_name: string; table_rows: bigint }[]>`
+      SELECT TABLE_NAME AS table_name, TABLE_ROWS AS table_rows
+      FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+      ORDER BY TABLE_NAME
     `;
-    console.log('All tables details:', tables);
+    console.log(`Tables (${tables.length}) :`);
+    for (const t of tables) {
+      console.log(`  - ${t.table_name} (~${t.table_rows} lignes)`);
+    }
   } catch (error) {
-    console.error('Error querying database:', error);
+    console.error('Erreur lors de l’interrogation de la base :', error);
+    process.exitCode = 1;
   } finally {
     await prisma.$disconnect();
   }

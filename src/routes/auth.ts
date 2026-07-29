@@ -1,13 +1,18 @@
 import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
 import axios from 'axios';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
 import { uploadBase64ToS3 } from '../s3';
+import {
+  signAccessToken,
+  signRefreshToken,
+  verifyRefreshToken,
+  setRefreshCookie,
+  clearRefreshCookie,
+} from '../auth/tokens';
 
 const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'construction_care_secret_key_12345!';
 
 // Envoi du code OTP pour validation du téléphone (Phase 3)
 router.post('/send-otp', async (req, res) => {
@@ -158,16 +163,14 @@ router.post('/register', async (req, res) => {
     });
 
     // Génération du token JWT
-    const token = jwt.sign(
-      {
-        id: result.user.id,
-        email: result.user.email,
-        role: result.user.role,
-        companyId: result.company.id,
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const tokenPayload = {
+      id: result.user.id,
+      email: result.user.email,
+      role: result.user.role,
+      companyId: result.company.id,
+    };
+    const token = signAccessToken(tokenPayload);
+    setRefreshCookie(res, signRefreshToken(tokenPayload));
 
     const planConfig = await prisma.subscriptionConfig.findUnique({
       where: { planName: result.company.subscriptionPlan },
@@ -231,24 +234,22 @@ router.post('/login', async (req, res) => {
     }
 
     if (!user) {
-      return res.status(400).json({ error: 'Téléphone/Email ou mot de passe incorrect.' });
+      return res.status(401).json({ error: 'Téléphone/Email ou mot de passe incorrect.' });
     }
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      return res.status(400).json({ error: 'Téléphone/Email ou mot de passe incorrect.' });
+      return res.status(401).json({ error: 'Téléphone/Email ou mot de passe incorrect.' });
     }
 
-    const token = jwt.sign(
-      {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        companyId: user.companyId,
-      },
-      JWT_SECRET,
-      { expiresIn: '24h' }
-    );
+    const tokenPayload = {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      companyId: user.companyId,
+    };
+    const token = signAccessToken(tokenPayload);
+    setRefreshCookie(res, signRefreshToken(tokenPayload));
 
     const planConfig = user.company
       ? await prisma.subscriptionConfig.findUnique({ where: { planName: user.company.subscriptionPlan } })
@@ -272,6 +273,36 @@ router.post('/login', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la connexion.' });
   }
+});
+
+// Renouveler l'access token à partir du refresh token (cookie httpOnly)
+router.post('/refresh', async (req: AuthenticatedRequest, res: Response) => {
+  const refreshToken = req.cookies?.refresh_token;
+  if (!refreshToken) {
+    return res.status(401).json({ error: 'Refresh token manquant.' });
+  }
+
+  try {
+    const decoded = verifyRefreshToken(refreshToken);
+    const payload = {
+      id: decoded.id,
+      email: decoded.email,
+      role: decoded.role,
+      companyId: decoded.companyId,
+    };
+    // Rotation du refresh token à chaque renouvellement
+    setRefreshCookie(res, signRefreshToken(payload));
+    return res.json({ token: signAccessToken(payload) });
+  } catch (err) {
+    clearRefreshCookie(res);
+    return res.status(401).json({ error: 'Refresh token invalide ou expiré.' });
+  }
+});
+
+// Déconnexion : invalide le cookie de refresh
+router.post('/logout', (req: AuthenticatedRequest, res: Response) => {
+  clearRefreshCookie(res);
+  res.json({ message: 'Déconnexion réussie.' });
 });
 
 // Récupérer les informations de la session courante

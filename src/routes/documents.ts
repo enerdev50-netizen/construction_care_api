@@ -198,6 +198,11 @@ router.post('/:id/sign', authenticateToken as any, async (req: AuthenticatedRequ
       return res.status(404).json({ error: 'Document introuvable.' });
     }
 
+    // Isolation multi-tenant : le document doit appartenir à l'entreprise de l'utilisateur (le SUPER_ADMIN est exempté)
+    if (req.user?.companyId && document.project.companyId !== req.user.companyId) {
+      return res.status(404).json({ error: 'Document introuvable.' });
+    }
+
     // Si l'utilisateur est un client, s'assurer que c'est bien son chantier
     if (req.user?.role === 'CLIENT') {
       const isAssigned = await prisma.projectAssignment.findFirst({
@@ -375,6 +380,11 @@ router.post('/:id/client-declare-payment', authenticateToken as any, async (req:
       return res.status(404).json({ error: 'Document introuvable.' });
     }
 
+    // Isolation multi-tenant : la facture doit appartenir à l'entreprise de l'utilisateur (le SUPER_ADMIN est exempté)
+    if (companyId && document.project.companyId !== companyId) {
+      return res.status(404).json({ error: 'Document introuvable.' });
+    }
+
     // Vérifier que le client est bien assigné à ce projet (ou que c'est un gérant/chef)
     const isManager = req.user?.role === 'COMPANY_ADMIN' || req.user?.role === 'TEAM_LEADER';
     const isAssigned = document.project.assignments.length > 0;
@@ -545,6 +555,11 @@ router.get('/:id/pdf', authenticateToken as any, async (req: AuthenticatedReques
     });
 
     if (!document) {
+      return res.status(404).json({ error: 'Document introuvable.' });
+    }
+
+    // Isolation multi-tenant : le document doit appartenir à l'entreprise de l'utilisateur (le SUPER_ADMIN est exempté)
+    if (companyId && document.project.companyId !== companyId) {
       return res.status(404).json({ error: 'Document introuvable.' });
     }
 

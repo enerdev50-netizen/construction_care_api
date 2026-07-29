@@ -5,12 +5,9 @@ node_modules/
 dist/
 build/
 
-# Local env file containing database secrets
+# Local env files containing database secrets
 .env
-
-# SQLite local database if used
-*.db
-*.db-journal
+.env.test
 
 # Logs
 logs/

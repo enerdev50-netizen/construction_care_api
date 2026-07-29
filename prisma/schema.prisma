@@ -1,21 +1,29 @@
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider          = "mysql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
 generator client {
   provider = "prisma-client-js"
 }
 
+// Conventions MySQL de ce schéma :
+// - Identifiants UUID : VarChar(36) explicite (au lieu du VarChar(191) par défaut de Prisma)
+//   pour garder des index compacts.
+// - Champs pouvant dépasser 191 caractères : @db.VarChar(n), @db.Text ou @db.LongText.
+//   MySQL tronque/refuse silencieusement au-delà de la taille déclarée, contrairement au
+//   type `text` illimité de PostgreSQL : chaque champ long est donc typé explicitement.
+
 model Company {
-  id                    String    @id @default(uuid())
-  name                  String
-  nif                   String?   // Numéro d'Identification Fiscale (TVA, etc.)
-  email                 String?
-  phone                 String?
-  address               String?
-  logoUrl               String?   // URL publique du logo stocké dans S3
-  subscriptionPlan      String    @default("FREE") // "FREE", "STANDARD", "PREMIUM"
+  id                    String    @id @default(uuid()) @db.VarChar(36)
+  name                  String    @db.VarChar(191)
+  nif                   String?   @db.VarChar(64) // Numéro d'Identification Fiscale (TVA, etc.)
+  email                 String?   @db.VarChar(191)
+  phone                 String?   @db.VarChar(32)
+  address               String?   @db.VarChar(500)
+  logoUrl               String?   @db.Text // URL publique du logo stocké dans S3
+  subscriptionPlan      String    @default("FREE") @db.VarChar(20) // "FREE", "STANDARD", "PREMIUM"
   subscriptionExpiresAt DateTime?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
@@ -26,17 +34,17 @@ model Company {
 }
 
 model User {
-  id          String   @id @default(uuid())
-  email       String?  @unique
-  password    String
-  firstName   String
-  lastName    String
-  phone       String?
-  role        String   @default("COMPANY_ADMIN") // "SUPER_ADMIN", "COMPANY_ADMIN", "TEAM_LEADER", "WORKER", "CLIENT"
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  email       String?  @unique @db.VarChar(191)
+  password    String   @db.VarChar(255) // hash bcrypt (60 caractères)
+  firstName   String   @db.VarChar(100)
+  lastName    String   @db.VarChar(100)
+  phone       String?  @db.VarChar(32)
+  role        String   @default("COMPANY_ADMIN") @db.VarChar(20) // "SUPER_ADMIN", "COMPANY_ADMIN", "TEAM_LEADER", "WORKER", "CLIENT"
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  companyId   String?
+  companyId   String?  @db.VarChar(36)
   company     Company? @relation(fields: [companyId], references: [id])
 
   assignments ProjectAssignment[]
@@ -44,22 +52,25 @@ model User {
   expenses    Expense[]
   createdPayments   Payment[] @relation("PaymentCreatedBy")
   validatedPayments Payment[] @relation("PaymentValidatedBy")
+
+  @@index([companyId])
 }
 
 model Project {
-  id          String   @id @default(uuid())
-  name        String
-  description String?
-  address     String?
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  name        String   @db.VarChar(191)
+  description String?  @db.Text
+  address     String?  @db.VarChar(500)
   latitude    Float?
   longitude   Float?
   startDate   DateTime
   endDate     DateTime
-  status      String   @default("EN_COURS") // "EN_COURS", "TERMINE", "SUSPENDU"
+  budget      Float?   // Budget prévisionnel du chantier (FCFA)
+  status      String   @default("EN_COURS") @db.VarChar(20) // "EN_COURS", "TERMINE", "SUSPENDU"
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  companyId   String
+  companyId   String   @db.VarChar(36)
   company     Company  @relation(fields: [companyId], references: [id])
 
   assignments ProjectAssignment[]
@@ -68,137 +79,164 @@ model Project {
   tasks       Task[]
   movements   MaterialMovement[]
   documents   Document[]
+
+  @@index([companyId])
 }
 
 model ProjectAssignment {
-  id          String   @id @default(uuid())
-  projectId   String
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  projectId   String   @db.VarChar(36)
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  userId      String
+  userId      String   @db.VarChar(36)
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   assignedAt  DateTime @default(now())
+
+  @@index([projectId])
+  @@index([userId])
 }
 
 model Expense {
-  id          String   @id @default(uuid())
-  projectId   String
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  projectId   String   @db.VarChar(36)
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   amount      Float
-  category    String   // "CIMENT", "SABLE", "TRANSPORT", "MAIN_DOEUVRE", "AUTRE"
-  description String
+  category    String   @db.VarChar(32) // "CIMENT", "SABLE", "TRANSPORT", "MAIN_DOEUVRE", "AUTRE"
+  description String   @db.Text
   date        DateTime @default(now())
   createdAt   DateTime @default(now())
 
-  beneficiaryId String?
+  beneficiaryId String? @db.VarChar(36)
   beneficiary   User?    @relation(fields: [beneficiaryId], references: [id], onDelete: SetNull)
 
-  devisId       String?
+  devisId       String?   @db.VarChar(36)
   devis         Document? @relation("DevisExpenses", fields: [devisId], references: [id], onDelete: SetNull)
-  receiptUrl    String?
-  status        String    @default("EN_ATTENTE") // "EN_ATTENTE", "PAYE_CLIENT", "PAYE"
+  receiptUrl    String?   @db.Text
+  status        String    @default("EN_ATTENTE") @db.VarChar(20) // "EN_ATTENTE", "PAYE_CLIENT", "PAYE"
+
+  @@index([projectId])
+  @@index([beneficiaryId])
+  @@index([devisId])
 }
 
 model ProgressPhoto {
-  id          String   @id @default(uuid())
-  projectId   String
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  projectId   String   @db.VarChar(36)
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  photoUrl    String   // Base64 or local server file path
-  type        String   // "AVANT", "APRES", "QUOTIDIEN"
-  comment     String?
-  takenById   String
+  photoUrl    String   @db.LongText // URL S3 ou image Base64 en repli si l'envoi S3 échoue
+  type        String   @db.VarChar(20) // "AVANT", "APRES", "QUOTIDIEN"
+  comment     String?  @db.Text
+  takenById   String   @db.VarChar(36)
   takenBy     User     @relation(fields: [takenById], references: [id])
   createdAt   DateTime @default(now())
+
+  @@index([projectId])
+  @@index([takenById])
 }
 
 model Task {
-  id          String   @id @default(uuid())
-  projectId   String
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  projectId   String   @db.VarChar(36)
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name        String   // "Fondations", "Élévation", "Toiture", "Électricité", "Plomberie", etc.
-  status      String   @default("A_FAIRE") // "A_FAIRE", "EN_COURS", "TERMINE"
+  name        String   @db.VarChar(191) // "Fondations", "Élévation", "Toiture", "Électricité", "Plomberie", etc.
+  status      String   @default("A_FAIRE") @db.VarChar(20) // "A_FAIRE", "EN_COURS", "TERMINE"
   dueDate     DateTime?
   updatedAt   DateTime @updatedAt
   createdAt   DateTime @default(now())
+
+  @@index([projectId])
 }
 
 model Material {
-  id            String   @id @default(uuid())
-  companyId     String
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  companyId     String   @db.VarChar(36)
   company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  name          String   // e.g. "Ciment", "Sable"
+  name          String   @db.VarChar(191) // e.g. "Ciment", "Sable"
   stock         Float    @default(0)
   minStockAlert Float    @default(5)
-  unit          String   @default("sacs") // "sacs", "tonnes", etc.
+  unit          String   @default("sacs") @db.VarChar(32) // "sacs", "tonnes", etc.
   updatedAt     DateTime @updatedAt
   createdAt     DateTime @default(now())
 
   movements     MaterialMovement[]
+
+  @@index([companyId])
 }
 
 model MaterialMovement {
-  id          String   @id @default(uuid())
-  materialId  String
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  materialId  String   @db.VarChar(36)
   material    Material @relation(fields: [materialId], references: [id], onDelete: Cascade)
-  projectId   String?
+  projectId   String?  @db.VarChar(36)
   project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  type        String   // "ENTREE", "SORTIE"
+  type        String   @db.VarChar(20) // "ENTREE", "SORTIE"
   quantity    Float
-  reason      String?  // e.g. "Achat", "Utilisé sur chantier"
+  reason      String?  @db.VarChar(255) // e.g. "Achat", "Utilisé sur chantier"
   date        DateTime @default(now())
+
+  @@index([materialId])
+  @@index([projectId])
 }
 
 model Document {
-  id              String    @id @default(uuid())
-  projectId       String
+  id              String    @id @default(uuid()) @db.VarChar(36)
+  projectId       String    @db.VarChar(36)
   project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  title           String
-  type            String    // "DEVIS", "FACTURE"
+  title           String    @db.VarChar(191)
+  type            String    @db.VarChar(20) // "DEVIS", "FACTURE"
   amount          Float
   paidAmount      Float     @default(0)
   declaredPaidAmount Float? @default(0)
-  status          String    @default("EN_ATTENTE") // "EN_ATTENTE", "SIGNE", "PAYE"
-  pdfUrl          String?
-  clientSignature String?   // Base64 drawing signature representation
+  status          String    @default("EN_ATTENTE") @db.VarChar(20) // "EN_ATTENTE", "SIGNE", "PAYE"
+  pdfUrl          String?   @db.Text
+  clientSignature String?   @db.LongText // URL S3 ou signature Base64 en repli si l'envoi S3 échoue
   signedAt        DateTime?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  devisId         String?
+  devisId         String?     @db.VarChar(36)
   devis           Document?   @relation("DevisFactures", fields: [devisId], references: [id], onDelete: SetNull)
   factures        Document[]  @relation("DevisFactures")
   expenses        Expense[]   @relation("DevisExpenses")
   payments        Payment[]
+
+  @@index([projectId])
+  @@index([devisId])
 }
 
 model Payment {
-  id                String   @id @default(uuid())
-  documentId        String
+  id                String   @id @default(uuid()) @db.VarChar(36)
+  documentId        String   @db.VarChar(36)
   document          Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   amount            Float
-  status            String   @default("EN_ATTENTE") // "EN_ATTENTE", "VALIDE"
+  status            String   @default("EN_ATTENTE") @db.VarChar(20) // "EN_ATTENTE", "VALIDE"
   createdAt         DateTime @default(now())
 
-  createdByUserId   String?
+  createdByUserId   String?  @db.VarChar(36)
   createdByUser     User?    @relation("PaymentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
 
-  validatedByUserId String?
+  validatedByUserId String?  @db.VarChar(36)
   validatedByUser   User?    @relation("PaymentValidatedBy", fields: [validatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@index([createdByUserId])
+  @@index([validatedByUserId])
 }
 
 model OTPVerification {
-  id        String   @id @default(uuid())
-  phone     String   @unique
-  code      String
+  id        String   @id @default(uuid()) @db.VarChar(36)
+  phone     String   @unique @db.VarChar(32)
+  code      String   @db.VarChar(10)
   expiresAt DateTime
   createdAt DateTime @default(now())
 }
 
 model SubscriptionConfig {
-  planName     String   @id // "FREE", "STANDARD", "PREMIUM"
+  planName     String   @id @db.VarChar(20) // "FREE", "STANDARD", "PREMIUM"
   maxProjects  Int
   maxUsers     Int
   price        Int      @default(0)
   durationDays Int      @default(30) // Durée en jours (ex: 30, 90, 365)
-  features     String @default("") // ex: "GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF"
+  // VarChar (et non Text) : MySQL n'accepte pas de DEFAULT littéral sur une colonne TEXT.
+  features     String   @default("") @db.VarChar(500) // ex: "GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF"
   updatedAt    DateTime @updatedAt
 }
