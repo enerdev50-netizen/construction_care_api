@@ -30,11 +30,10 @@ RUN apk add --no-cache python3 make g++
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-# Le CLI prisma est en devDependencies mais reste nécessaire au runtime pour le
-# `db push` de l'entrypoint : on le réinstalle dans l'arbre de production, à la
-# version déclarée par le projet.
-RUN npm ci --omit=dev \
-    && npm install --no-save "prisma@$(node -p "require('./package.json').devDependencies.prisma")"
+# Le CLI prisma est désormais une dépendance de PRODUCTION : il est requis au
+# runtime par l'entrypoint (`migrate deploy`) et par `src/bootstrap/`. Il est
+# donc déjà installé par `npm ci --omit=dev` — plus besoin de le réinstaller.
+RUN npm ci --omit=dev
 
 # Client Prisma régénéré dans l'arbre de production
 COPY prisma ./prisma
