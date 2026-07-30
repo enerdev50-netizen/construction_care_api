@@ -255,6 +255,33 @@ Mot de passe commun : **`Pass@2026`**. La connexion accepte l'email **ou** le t�
 
 ---
 
+## 💳 Paiement Mobile Money (FedaPay)
+
+Intégration directe, sans redirection : un push USSD est envoyé sur le téléphone du client,
+et c'est le **webhook FedaPay signé** qui confirme le paiement (`POST /payments/webhooks/fedapay`).
+Sans `FEDAPAY_SECRET_KEY`, l'API démarre normalement : les routes `/payments/*` répondent 503.
+
+| Variable | Rôle |
+| :--- | :--- |
+| `FEDAPAY_SECRET_KEY` | Clé secrète API (sandbox ou live) |
+| `FEDAPAY_ENVIRONMENT` | `sandbox` (défaut) ou `live` |
+| `FEDAPAY_WEBHOOK_KEY` | Secret de l'endpoint webhook (tableau de bord FedaPay → Développeurs) |
+
+En développement, tester la création de transaction et le push USSD sans passer par la suite
+automatisée (qui simule le SDK) :
+
+```bash
+npx ts-node src/scripts/smoke-fedapay.ts
+```
+
+> ⚠️ **Point ouvert non résolu** (constaté en sandbox réel le 2026-07-30) : la plateforme reçoit
+> toujours le montant plein de la facture, mais le client peut être débité ~4,2 % de plus sur son
+> compte Mobile Money, indépendamment du paramètre `include_fees`. À trancher avant tout paiement
+> client réel — voir `Docs/PRD/2026-07-30_paiement-mobile-money-fedapay.md` et `Docs/TODO.md`.
+
+> Le webhook n'a été testé qu'en local (création + push). Une **URL publique** (tunnel type ngrok)
+> est nécessaire pour tester la réception réelle du webhook avant la mise en production.
+
 ## 🗄️ Notes spécifiques MySQL
 
 * **Champs longs.** MySQL fait correspondre un `String` Prisma non annoté à `VARCHAR(191)` et rejette

@@ -52,6 +52,7 @@ model User {
   expenses    Expense[]
   createdPayments   Payment[] @relation("PaymentCreatedBy")
   validatedPayments Payment[] @relation("PaymentValidatedBy")
+  mobileMoneyTransactions MobileMoneyTransaction[]
 
   @@index([companyId])
 }
@@ -198,6 +199,7 @@ model Document {
   factures        Document[]  @relation("DevisFactures")
   expenses        Expense[]   @relation("DevisExpenses")
   payments        Payment[]
+  mobileMoneyTransactions MobileMoneyTransaction[]
 
   @@index([projectId])
   @@index([devisId])
@@ -217,9 +219,39 @@ model Payment {
   validatedByUserId String?  @db.VarChar(36)
   validatedByUser   User?    @relation("PaymentValidatedBy", fields: [validatedByUserId], references: [id], onDelete: SetNull)
 
+  mobileMoneyTransactions MobileMoneyTransaction[]
+
   @@index([documentId])
   @@index([createdByUserId])
   @@index([validatedByUserId])
+}
+
+// Trace de bout en bout d'un encaissement Mobile Money via FedaPay.
+// Un paiement approuvé donne naissance à un Payment classique (VALIDE) :
+// l'existant (affichage, agrégats, statuts de facture) reste inchangé.
+model MobileMoneyTransaction {
+  id               String   @id @default(uuid()) @db.VarChar(36)
+  // Identifiant de la transaction côté FedaPay — clé d'idempotence du webhook
+  fedapayId        Int      @unique
+  documentId       String   @db.VarChar(36)
+  document         Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  paymentId        String?  @db.VarChar(36)
+  payment          Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  amount           Int      // FCFA (XOF) — entier strict, exigé par FedaPay
+  provider         String   @db.VarChar(20) // "togocel", "moov_tg", "mtn_bj", ...
+  phoneNumber      String   @db.VarChar(32) // numéro local normalisé (sans indicatif)
+  status           String   @default("PENDING") @db.VarChar(20) // "PENDING", "APPROVED", "DECLINED", "CANCELED", "EXPIRED", "FAILED"
+  fedapayReference String?  @db.VarChar(64)
+  failureReason    String?  @db.VarChar(500)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  createdByUserId  String?  @db.VarChar(36)
+  createdByUser    User?    @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@index([status])
+  @@index([createdByUserId])
 }
 
 model OTPVerification {
