@@ -1,0 +1,31 @@
+# MySQL local pour le développement — parité avec la base MySQL de Dokploy.
+#
+#   docker compose -f docker-compose.local.yml up -d
+#   npx prisma db push && npx prisma db seed
+#
+# DATABASE_URL correspondante (déjà dans .env) :
+#   mysql://construction:construction@127.0.0.1:3308/construction
+
+services:
+  mysql:
+    image: mysql:8
+    container_name: construction_care_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: construction
+      MYSQL_USER: construction
+      MYSQL_PASSWORD: construction
+    ports:
+      # 3308 en local pour ne pas entrer en conflit avec un MySQL déjà installé
+      - '3308:3306'
+    volumes:
+      - construction_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-uroot', '-proot']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  construction_mysql_data:
