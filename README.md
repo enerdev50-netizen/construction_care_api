@@ -161,21 +161,39 @@ En développement, pour créer une nouvelle migration après modification de `sc
 npm run prisma:migrate    # prisma migrate dev
 ```
 
-### 6. Peuplement des données de démonstration (Seed)
+### 6. Peuplement des données (Seed)
 
-```bash
-npx prisma db seed        # ou : npm run prisma:seed
-```
+Deux scripts distincts. **Ne jamais utiliser le seed de démonstration en production.**
 
-> **⚠️ Le seed est destructif.** Il vide au préalable les tables `Document`, `MaterialMovement`,
-> `Material`, `ProgressPhoto`, `Expense`, `Task`, `ProjectAssignment`, `Project`, `User`, `Company`
-> et `SubscriptionConfig`. À réserver aux bases de développement.
+#### Développement — `npm run prisma:seed` (ou `npx prisma db seed`)
 
-Le seed crée :
+> **⚠️ Destructif.** Il vide au préalable les tables `Document`, `MaterialMovement`, `Material`,
+> `ProgressPhoto`, `Expense`, `Task`, `ProjectAssignment`, `Project`, `User`, `Company` et
+> `SubscriptionConfig`. Il **refuse de s'exécuter si `NODE_ENV=production`**.
 
-* Les **3 forfaits d'abonnement** (`FREE`, `STANDARD`, `PREMIUM`) — indispensables au fonctionnement de l'API (`GET /auth/plans`, contrôle des quotas de chantiers/utilisateurs). Sans eux, l'inscription et la création de chantiers échouent.
-* Une **entreprise de démonstration** : « Bâtisseur du Golfe S.A. » (plan `PREMIUM`).
-* Les **5 comptes de test** décrits plus bas.
+Crée : les 3 forfaits, une entreprise de démonstration (« Bâtisseur du Golfe S.A. », plan
+`PREMIUM`) et les 5 comptes de test décrits plus bas.
+
+#### Production — `npm run seed:prod`
+
+**Additif uniquement, idempotent, rejouable à chaque déploiement.** Crée exactement :
+
+* les **3 forfaits d'abonnement** (`FREE`, `STANDARD`, `PREMIUM`) — un forfait déjà présent
+  (tarif ajusté en production) n'est **jamais** écrasé ;
+* **1 compte Super Administrateur** — uniquement s'il n'en existe aucun ; le mot de passe d'un
+  compte existant n'est jamais réécrit.
+
+Identifiants fournis par variables d'environnement (jamais versionnées) :
+
+| Variable | Obligatoire | Rôle |
+| :--- | :--- | :--- |
+| `SUPERADMIN_EMAIL` | ✅ | Email de connexion |
+| `SUPERADMIN_PASSWORD` | ✅ (≥ 12 caractères) | Mot de passe |
+| `SUPERADMIN_FIRSTNAME` / `SUPERADMIN_LASTNAME` | — | Défaut : « Super Administrateur » |
+| `SUPERADMIN_PHONE` | — | Défaut : vide |
+
+Ces variables ne sont exigées que tant qu'aucun `SUPER_ADMIN` n'existe : après le premier
+déploiement, l'application démarre sans elles.
 
 ### 7. Préparation de la base de test
 
@@ -187,13 +205,31 @@ npm run test:db:setup     # Applique les migrations sur constructcare_test
 
 ---
 
+## 🚀 Déploiement en production
+
+Au démarrage avec `NODE_ENV=production`, le serveur applique **automatiquement** les migrations
+en attente puis l'amorçage (3 forfaits + Super Admin), **avant** d'accepter la moindre requête.
+En cas d'échec, il refuse de démarrer. Un déploiement se réduit donc à :
+
+```bash
+npm ci
+npm run build
+npm start        # migrations + seed + serveur
+```
+
+`BOOTSTRAP_ON_START=false` désactive cet amorçage automatique si l'hébergeur offre une phase de
+release dédiée — exécuter alors `npm run deploy` (migrations + seed sur le code compilé) avant
+`npm start`. `BOOTSTRAP_ON_START=true` le force hors production.
+
 ## 🏃 Scripts disponibles
 
 | Script | Description |
 | :--- | :--- |
 | `npm run dev` | Démarre l'API en développement (`ts-node`) sur le port défini par `PORT` |
-| `npm run build` | Compile TypeScript vers `dist/` |
-| `npm start` | Lance l'API compilée (production) |
+| `npm run build` | Génère le client Prisma puis compile TypeScript vers `dist/` |
+| `npm start` | Lance l'API compilée (avec amorçage automatique si `NODE_ENV=production`) |
+| `npm run deploy` | Migrations + amorçage de production sur le code compilé (phase de release) |
+| `npm run seed:prod` | Amorçage de production seul : 3 forfaits + Super Admin (additif, idempotent) |
 | `npm run prisma:generate` | Régénère le client Prisma |
 | `npm run prisma:migrate` | Crée et applique une migration (développement) |
 | `npm run prisma:deploy` | Applique les migrations existantes (production / CI) |

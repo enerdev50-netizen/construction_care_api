@@ -4,13 +4,15 @@
   "description": "API for Construction Care SaaS",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "prisma generate && tsc",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
+    "deploy": "prisma migrate deploy && node dist/bootstrap/cli.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "ts-node prisma/seed.ts",
+    "seed:prod": "ts-node src/bootstrap/cli.ts",
     "db:check": "ts-node src/db_check.ts",
     "test:db:setup": "dotenv -e .env.test -- prisma migrate deploy",
     "verify:tenant": "ts-node scripts/verify-tenant-isolation.ts",
@@ -28,7 +30,8 @@
     "express-rate-limit": "^8.5.2",
     "express-slow-down": "^3.1.0",
     "helmet": "^8.2.0",
-    "jsonwebtoken": "^9.0.3"
+    "jsonwebtoken": "^9.0.3",
+    "prisma": "^6.19.3"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
@@ -40,7 +43,6 @@
     "@types/node": "^20.11.24",
     "@types/supertest": "^7.2.0",
     "dotenv-cli": "^11.0.0",
-    "prisma": "^6.19.3",
     "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3",

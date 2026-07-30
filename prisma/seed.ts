@@ -1,9 +1,31 @@
+/**
+ * ⚠️ AMORÇAGE DE DÉVELOPPEMENT — DESTRUCTIF.
+ *
+ * Ce script VIDE 11 tables avant de créer une entreprise et des comptes de
+ * démonstration. Il ne doit JAMAIS être exécuté sur une base de production.
+ *
+ * Pour la production, utiliser `npm run seed:prod` (`prisma/seed.prod.ts`) :
+ * additif uniquement, 3 forfaits + 1 Super Administrateur.
+ */
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import { SYSTEM_PLANS } from '../src/bootstrap/systemPlans';
 
 const prisma = new PrismaClient();
 
 async function main() {
+  // Garde-fou : `package.json#prisma.seed` pointe sur ce script, donc
+  // `prisma migrate reset` le déclenche automatiquement. Sans ce contrôle, une
+  // réinitialisation lancée par erreur avec l'environnement de production
+  // viderait les données clients.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'Ce script de démonstration est destructif et ne peut pas être exécuté avec ' +
+        'NODE_ENV=production. Utilisez `npm run seed:prod` pour amorcer une base de production.'
+    );
+  }
+
   console.log('🌱 Début du peuplement de la base de données...');
 
   // Nettoyer la base de données
@@ -19,35 +41,8 @@ async function main() {
   await prisma.company.deleteMany();
   await prisma.subscriptionConfig.deleteMany();
 
-  // 0. Configuration des plans d'abonnement
-  await prisma.subscriptionConfig.createMany({
-    data: [
-      {
-        planName: 'FREE',
-        maxProjects: 1,
-        maxUsers: 3,
-        price: 0,
-        durationDays: 30,
-        features: 'GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF',
-      },
-      {
-        planName: 'STANDARD',
-        maxProjects: 10,
-        maxUsers: 15,
-        price: 5000,
-        durationDays: 30,
-        features: 'GEOLOCALISATION,MATERIAUX',
-      },
-      {
-        planName: 'PREMIUM',
-        maxProjects: 9999,
-        maxUsers: 9999,
-        price: 15000,
-        durationDays: 30,
-        features: 'GEOLOCALISATION,MATERIAUX,DOCUMENTS,PDF',
-      },
-    ],
-  });
+  // 0. Configuration des forfaits d'abonnement — même grille qu'en production
+  await prisma.subscriptionConfig.createMany({ data: SYSTEM_PLANS });
 
   // 1. Création d'une entreprise démo sous plan PREMIUM
   const company = await prisma.company.create({
@@ -131,9 +126,9 @@ async function main() {
 }
 
 main()
-  .catch((e) => {
-    console.error('❌ Erreur lors du peuplement de la base de données :', e);
-    process.exit(1);
+  .catch((e: unknown) => {
+    console.error(`\n❌ Peuplement interrompu : ${e instanceof Error ? e.message : e}`);
+    process.exitCode = 1;
   })
   .finally(async () => {
     await prisma.$disconnect();
