@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
+import { validateBody } from '../utils/validate';
+import { createMaterialSchema, movementSchema, updateMaterialSchema } from './materials.schemas';
 
 const router = Router();
 
@@ -27,22 +29,18 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
 });
 
 // Ajouter un nouveau matériau en inventaire
-router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateToken as any, validateBody(createMaterialSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const { name, minStockAlert, unit, initialStock } = req.body;
-
-  if (!name) {
-    return res.status(400).json({ error: 'Le nom du matériau est obligatoire.' });
-  }
 
   try {
     const material = await prisma.material.create({
       data: {
         companyId: companyId!,
         name,
-        minStockAlert: minStockAlert ? parseFloat(minStockAlert) : 5,
+        minStockAlert: minStockAlert ?? 5,
         unit: unit || 'sacs',
-        stock: initialStock ? parseFloat(initialStock) : 0,
+        stock: initialStock ?? 0,
       },
     });
 
@@ -53,22 +51,9 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 });
 
 // Enregistrer un mouvement de stock (Entrée / Sortie)
-router.post('/movement', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/movement', authenticateToken as any, validateBody(movementSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
-  const { materialId, projectId, type, quantity, reason } = req.body;
-
-  if (!materialId || !type || !quantity) {
-    return res.status(400).json({ error: 'Champs obligatoires manquants.' });
-  }
-
-  if (!['ENTREE', 'SORTIE'].includes(type)) {
-    return res.status(400).json({ error: 'Type de mouvement invalide.' });
-  }
-
-  const qty = parseFloat(quantity);
-  if (qty <= 0) {
-    return res.status(400).json({ error: 'La quantité doit être supérieure à 0.' });
-  }
+  const { materialId, projectId, type, quantity: qty, reason } = req.body;
 
   try {
     // Vérifier que le matériau appartient bien à l'entreprise
@@ -155,7 +140,7 @@ router.get('/alerts', authenticateToken as any, async (req: AuthenticatedRequest
 });
 
 // Modifier un matériau
-router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id', authenticateToken as any, validateBody(updateMaterialSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const materialId = req.params.id;
   const { name, minStockAlert, unit, stock } = req.body;
@@ -171,12 +156,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
 
     const updated = await prisma.material.update({
       where: { id: materialId },
-      data: {
-        name: name !== undefined ? name : undefined,
-        minStockAlert: minStockAlert !== undefined ? parseFloat(minStockAlert) : undefined,
-        unit: unit !== undefined ? unit : undefined,
-        stock: stock !== undefined ? parseFloat(stock) : undefined,
-      },
+      data: { name, minStockAlert, unit, stock },
     });
 
     res.json(updated);

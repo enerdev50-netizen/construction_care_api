@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
 import { uploadBase64ToS3 } from '../s3';
+import { validateBody } from '../utils/validate';
+import { createProgressSchema } from './progress.schemas';
 
 const router = Router();
 
@@ -46,17 +48,9 @@ router.get('/:projectId', authenticateToken as any, async (req: AuthenticatedReq
 });
 
 // Ajouter un rapport quotidien / photo au chantier
-router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateToken as any, validateBody(createProgressSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const { projectId, photoUrl, type, comment } = req.body;
-
-  if (!projectId || !photoUrl || !type) {
-    return res.status(400).json({ error: 'Champs obligatoires manquants.' });
-  }
-
-  if (!['AVANT', 'APRES', 'QUOTIDIEN'].includes(type)) {
-    return res.status(400).json({ error: 'Type de photo de suivi invalide.' });
-  }
 
   try {
     // Vérifier l'accès au chantier

@@ -1,6 +1,14 @@
 import { Router, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
+import { validateBody } from '../utils/validate';
+import {
+  createProjectSchema,
+  updateProjectSchema,
+  assignUsersSchema,
+  taskStatusSchema,
+  createTaskSchema,
+} from './projects.schemas';
 
 const router = Router();
 
@@ -127,7 +135,7 @@ router.get('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
 });
 
 // Créer un nouveau chantier (avec vérification des limites de plan)
-router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateToken as any, validateBody(createProjectSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const role = req.user?.role;
 
@@ -136,10 +144,6 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
   }
 
   const { name, description, address, latitude, longitude, startDate, endDate, budget, clientIds } = req.body;
-
-  if (!name || !startDate || !endDate) {
-    return res.status(400).json({ error: 'Champs obligatoires manquants.' });
-  }
 
   try {
     // Vérifier l'abonnement et le nombre de chantiers actuels
@@ -170,11 +174,11 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
           name,
           description,
           address,
-          latitude: latitude ? parseFloat(latitude) : null,
-          longitude: longitude ? parseFloat(longitude) : null,
-          startDate: new Date(startDate),
-          endDate: new Date(endDate),
-          budget: budget != null && budget !== '' ? parseFloat(budget) : null,
+          latitude: latitude ?? null,
+          longitude: longitude ?? null,
+          startDate,
+          endDate,
+          budget: budget ?? null,
           companyId,
         },
       });
@@ -215,7 +219,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 });
 
 // Modifier un chantier
-router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id', authenticateToken as any, validateBody(updateProjectSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const projectId = req.params.id;
   const { name, description, address, latitude, longitude, startDate, endDate, status, budget } = req.body;
@@ -229,19 +233,12 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       return res.status(404).json({ error: 'Chantier introuvable.' });
     }
 
+    // Un champ absent (`undefined`) est ignoré par Prisma et laisse la valeur
+    // existante intacte ; un champ explicitement `null` (latitude, longitude,
+    // budget) l'efface.
     const updated = await prisma.project.update({
       where: { id: projectId },
-      data: {
-        name: name !== undefined ? name : existingProject.name,
-        description: description !== undefined ? description : existingProject.description,
-        address: address !== undefined ? address : existingProject.address,
-        latitude: latitude !== undefined ? (latitude ? parseFloat(latitude) : null) : existingProject.latitude,
-        longitude: longitude !== undefined ? (longitude ? parseFloat(longitude) : null) : existingProject.longitude,
-        startDate: startDate !== undefined ? new Date(startDate) : existingProject.startDate,
-        endDate: endDate !== undefined ? new Date(endDate) : existingProject.endDate,
-        status: status !== undefined ? status : existingProject.status,
-        budget: budget !== undefined ? (budget != null && budget !== '' ? parseFloat(budget) : null) : existingProject.budget,
-      },
+      data: { name, description, address, latitude, longitude, startDate, endDate, status, budget },
     });
 
     res.json(updated);
@@ -252,14 +249,10 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
 });
 
 // Assigner des membres d'équipe / clients à un chantier
-router.post('/:id/assign', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/assign', authenticateToken as any, validateBody(assignUsersSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const projectId = req.params.id;
   const { userIds } = req.body; // Tableau d'IDs d'utilisateurs à assigner
-
-  if (!userIds || !Array.isArray(userIds)) {
-    return res.status(400).json({ error: 'Tableau userIds requis.' });
-  }
 
   try {
     const project = await prisma.project.findFirst({
@@ -303,7 +296,7 @@ router.post('/:id/assign', authenticateToken as any, async (req: AuthenticatedRe
 });
 
 // Mettre à jour le statut d'une tâche du chantier
-router.put('/:projectId/tasks/:taskId', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:projectId/tasks/:taskId', authenticateToken as any, validateBody(taskStatusSchema), async (req: AuthenticatedRequest, res: Response) => {
   const { status, dueDate } = req.body; // "A_FAIRE", "EN_COURS", "TERMINE"
   const { projectId, taskId } = req.params;
 
@@ -319,10 +312,7 @@ router.put('/:projectId/tasks/:taskId', authenticateToken as any, async (req: Au
 
     const updatedTask = await prisma.task.update({
       where: { id: taskId, projectId },
-      data: {
-        status: status !== undefined ? status : undefined,
-        dueDate: dueDate !== undefined ? (dueDate ? new Date(dueDate) : null) : undefined,
-      },
+      data: { status, dueDate },
     });
 
     res.json(updatedTask);
@@ -333,13 +323,9 @@ router.put('/:projectId/tasks/:taskId', authenticateToken as any, async (req: Au
 });
 
 // Ajouter une tâche à un chantier
-router.post('/:projectId/tasks', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:projectId/tasks', authenticateToken as any, validateBody(createTaskSchema), async (req: AuthenticatedRequest, res: Response) => {
   const { name, dueDate } = req.body;
   const { projectId } = req.params;
-
-  if (!name) {
-    return res.status(400).json({ error: 'Le nom de la tâche est requis.' });
-  }
 
   try {
     const project = await prisma.project.findFirst({
@@ -355,7 +341,7 @@ router.post('/:projectId/tasks', authenticateToken as any, async (req: Authentic
         projectId,
         name,
         status: 'A_FAIRE',
-        dueDate: dueDate ? new Date(dueDate) : null,
+        dueDate: dueDate ?? null,
       },
     });
 

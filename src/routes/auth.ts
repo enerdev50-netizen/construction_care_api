@@ -11,16 +11,21 @@ import {
   setRefreshCookie,
   clearRefreshCookie,
 } from '../auth/tokens';
+import { validateBody } from '../utils/validate';
+import {
+  sendOtpSchema,
+  registerSchema,
+  loginSchema,
+  subscriptionSchema,
+  updateCompanySchema,
+  updateMeSchema,
+} from './auth.schemas';
 
 const router = Router();
 
 // Envoi du code OTP pour validation du téléphone (Phase 3)
-router.post('/send-otp', async (req, res) => {
+router.post('/send-otp', validateBody(sendOtpSchema), async (req, res) => {
   const { phone } = req.body;
-
-  if (!phone) {
-    return res.status(400).json({ error: 'Numéro de téléphone requis.' });
-  }
 
   // Code OTP à 6 chiffres
   const code = Math.floor(100000 + Math.random() * 900000).toString();
@@ -81,7 +86,7 @@ router.post('/send-otp', async (req, res) => {
 });
 
 // Inscription de l'entreprise et du gérant (Admin) après vérification OTP (Phase 1, 2, 3)
-router.post('/register', async (req, res) => {
+router.post('/register', validateBody(registerSchema), async (req, res) => {
   const {
     companyName,
     companyEmail,
@@ -93,11 +98,6 @@ router.post('/register', async (req, res) => {
     password,
     otpCode,
   } = req.body;
-
-  // Validation Phase 1 & Phase 2 (otpCode is optional now)
-  if (!companyName || !companyPhone || !firstName || !lastName || !email || !password) {
-    return res.status(400).json({ error: 'Champs obligatoires manquants.' });
-  }
 
   try {
     if (otpCode) {
@@ -197,13 +197,9 @@ router.post('/register', async (req, res) => {
 });
 
 // Connexion d'un utilisateur (par téléphone ou email + mot de passe)
-router.post('/login', async (req, res) => {
+router.post('/login', validateBody(loginSchema), async (req, res) => {
   const { phone, email, password } = req.body;
   const loginIdentifier = phone || email;
-
-  if (!loginIdentifier || !password) {
-    return res.status(400).json({ error: 'Champs obligatoires manquants.' });
-  }
 
   try {
     // 1. Tenter un matching direct (exact)
@@ -354,7 +350,7 @@ router.get('/plans', async (req, res) => {
 });
 
 // Upgrade / Changement de plan d'abonnement (Simulation)
-router.post('/subscription', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/subscription', authenticateToken as any, validateBody(subscriptionSchema), async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user || req.user.role !== 'COMPANY_ADMIN') {
     return res.status(403).json({ error: 'Seul l\'administrateur peut modifier l\'abonnement.' });
   }
@@ -382,16 +378,12 @@ router.post('/subscription', authenticateToken as any, async (req: Authenticated
 });
 
 // Mettre à jour le profil de l'entreprise (Nom, Email, Téléphone, Adresse, Logo)
-router.put('/company', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/company', authenticateToken as any, validateBody(updateCompanySchema), async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user || req.user.role !== 'COMPANY_ADMIN') {
     return res.status(403).json({ error: 'Seul l\'administrateur de l\'entreprise peut modifier le profil.' });
   }
 
   const { name, nif, email, phone, address, logoFile } = req.body;
-
-  if (!name) {
-    return res.status(400).json({ error: 'Le nom de l\'entreprise est obligatoire.' });
-  }
 
   try {
     let finalLogoUrl = undefined;
@@ -424,15 +416,11 @@ router.put('/company', authenticateToken as any, async (req: AuthenticatedReques
 });
 
 // Mettre à jour le profil de l'utilisateur connecté
-router.put('/me', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/me', authenticateToken as any, validateBody(updateMeSchema), async (req: AuthenticatedRequest, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Non authentifié.' });
 
   const userId = req.user.id;
   const { firstName, lastName, phone, email, password } = req.body;
-
-  if (!firstName || !lastName) {
-    return res.status(400).json({ error: 'Le prénom et le nom sont obligatoires.' });
-  }
 
   try {
     const dataToUpdate: any = {

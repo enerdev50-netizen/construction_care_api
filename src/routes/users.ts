@@ -2,6 +2,8 @@ import { Router, Response } from 'express';
 import bcrypt from 'bcrypt';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken, requireRole } from '../middleware/auth';
+import { validateBody } from '../utils/validate';
+import { createUserSchema, updateUserSchema } from './users.schemas';
 
 const router = Router();
 
@@ -30,24 +32,12 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
 });
 
 // Ajouter un utilisateur (ouvrier, chef d'équipe, ou client)
-router.post('/', authenticateToken as any, requireRole(['COMPANY_ADMIN']) as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateToken as any, requireRole(['COMPANY_ADMIN']) as any, validateBody(createUserSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   if (!companyId) return res.status(400).json({ error: 'Identifiant entreprise manquant.' });
 
   const { email, password, firstName, lastName, phone, role } = req.body;
   const formattedEmail = email && email.trim() !== "" ? email.trim() : null;
-
-  if (!password || !firstName || !lastName || !role) {
-    return res.status(400).json({ error: 'Champs obligatoires manquants (Mot de passe, Prénom, Nom, Rôle).' });
-  }
-
-  if (!formattedEmail && !phone) {
-    return res.status(400).json({ error: 'L\'adresse email ou le numéro de téléphone est obligatoire.' });
-  }
-
-  if (!['TEAM_LEADER', 'WORKER', 'CLIENT'].includes(role)) {
-    return res.status(400).json({ error: 'Rôle invalide.' });
-  }
 
   try {
     // Vérifier l'abonnement et la limite de collaborateurs
@@ -128,7 +118,7 @@ router.delete('/:id', authenticateToken as any, requireRole(['COMPANY_ADMIN']) a
 });
 
 // Modifier un utilisateur
-router.put('/:id', authenticateToken as any, requireRole(['COMPANY_ADMIN']) as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id', authenticateToken as any, requireRole(['COMPANY_ADMIN']) as any, validateBody(updateUserSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const userId = req.params.id;
   const { email, firstName, lastName, phone, role, password } = req.body;

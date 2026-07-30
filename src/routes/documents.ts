@@ -3,6 +3,14 @@ import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
 import { uploadBase64ToS3 } from '../s3';
 import { syncDevisStatus, syncExpenseFromDocument } from '../devis_sync';
+import { validateBody } from '../utils/validate';
+import {
+  createDocumentSchema,
+  signDocumentSchema,
+  documentStatusSchema,
+  paymentAmountSchema,
+  updateDocumentSchema,
+} from './documents.schemas';
 
 const router = Router();
 
@@ -126,17 +134,9 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
 });
 
 // Créer un devis ou une facture
-router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateToken as any, validateBody(createDocumentSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const { projectId, title, type, amount, pdfFile, devisId } = req.body;
-
-  if (!projectId || !title || !type || amount === undefined || amount === null) {
-    return res.status(400).json({ error: 'Champs obligatoires manquants.' });
-  }
-
-  if (!['DEVIS', 'FACTURE'].includes(type)) {
-    return res.status(400).json({ error: 'Type de document invalide.' });
-  }
 
   try {
     // Vérifier que le chantier appartient bien à l'entreprise
@@ -163,7 +163,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
         projectId,
         title,
         type,
-        amount: parseFloat(amount),
+        amount,
         status: 'EN_ATTENTE',
         pdfUrl: finalPdfUrl,
         devisId: devisId || null,
@@ -180,13 +180,9 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
 });
 
 // Signature client (pour devis)
-router.post('/:id/sign', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/sign', authenticateToken as any, validateBody(signDocumentSchema), async (req: AuthenticatedRequest, res: Response) => {
   const documentId = req.params.id;
   const { clientSignature } = req.body; // Image Base64 de la signature
-
-  if (!clientSignature) {
-    return res.status(400).json({ error: 'La signature client est requise.' });
-  }
 
   try {
     const document = await prisma.document.findUnique({
@@ -242,18 +238,10 @@ router.post('/:id/sign', authenticateToken as any, async (req: AuthenticatedRequ
 });
 
 // Mettre à jour le statut d'un document (ex: marquer comme PAYE ou SIGNE)
-router.put('/:id/status', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id/status', authenticateToken as any, validateBody(documentStatusSchema), async (req: AuthenticatedRequest, res: Response) => {
   const documentId = req.params.id;
   const { status } = req.body;
   const companyId = req.user?.companyId;
-
-  if (!status) {
-    return res.status(400).json({ error: 'Le statut est requis.' });
-  }
-
-  if (!['EN_ATTENTE', 'SIGNE', 'PAYE_CLIENT', 'PAYE_PARTIEL', 'PAYE'].includes(status)) {
-    return res.status(400).json({ error: 'Statut invalide.' });
-  }
 
   if (req.user?.role === 'CLIENT' && status === 'PAYE') {
     return res.status(403).json({ error: 'Seul le gérant ou chef d\'équipe peut valider le paiement.' });
@@ -310,9 +298,9 @@ router.put('/:id/status', authenticateToken as any, async (req: AuthenticatedReq
       }
       declaredAmountUpdate = 0;
     } else if (status === 'PAYE_CLIENT') {
-      const versement = req.body.declaredPaidAmount !== undefined ? parseFloat(req.body.declaredPaidAmount) : undefined;
+      const versement = req.body.declaredPaidAmount;
       const remaining = document.amount - document.paidAmount;
-      declaredAmountUpdate = versement !== undefined && !isNaN(versement) ? Math.min(versement, remaining) : remaining;
+      declaredAmountUpdate = versement !== undefined ? Math.min(versement, remaining) : remaining;
       nextStatus = 'PAYE_CLIENT';
     } else if (status === 'EN_ATTENTE') {
       await prisma.payment.deleteMany({
@@ -355,19 +343,14 @@ router.put('/:id/status', authenticateToken as any, async (req: AuthenticatedReq
 
 
 // [CLIENT] Déclarer un paiement partiel ou total sur une facture (en attente de validation gérant)
-router.post('/:id/client-declare-payment', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/client-declare-payment', authenticateToken as any, validateBody(paymentAmountSchema), async (req: AuthenticatedRequest, res: Response) => {
   const documentId = req.params.id;
-  const { amount } = req.body;
+  const { amount: versement } = req.body;
   const userId = req.user?.id;
   const companyId = req.user?.companyId;
 
   if (req.user?.role === 'WORKER') {
     return res.status(403).json({ error: 'Action non autorisée.' });
-  }
-
-  const versement = parseFloat(amount);
-  if (isNaN(versement) || versement <= 0) {
-    return res.status(400).json({ error: 'Le montant du versement doit être supérieur à 0.' });
   }
 
   try {
@@ -451,18 +434,13 @@ router.post('/:id/client-declare-payment', authenticateToken as any, async (req:
 });
 
 // Enregistrer un paiement (partiel ou total) sur une facture existante (GÉRANT / CHEF uniquement)
-router.post('/:id/record-payment', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/record-payment', authenticateToken as any, validateBody(paymentAmountSchema), async (req: AuthenticatedRequest, res: Response) => {
   const documentId = req.params.id;
-  const { amount } = req.body;
+  const { amount: versement } = req.body;
   const companyId = req.user?.companyId;
 
   if (req.user?.role === 'CLIENT' || req.user?.role === 'WORKER') {
     return res.status(403).json({ error: 'Seul le gérant ou le chef d\'équipe peut valider ou enregistrer un règlement.' });
-  }
-
-  const versement = parseFloat(amount);
-  if (isNaN(versement) || versement <= 0) {
-    return res.status(400).json({ error: 'Le montant du versement doit être supérieur à 0.' });
   }
 
   try {
@@ -583,7 +561,7 @@ router.get('/:id/pdf', authenticateToken as any, async (req: AuthenticatedReques
 });
 
 // Modifier un document (Devis / Facture)
-router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id', authenticateToken as any, validateBody(updateDocumentSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const documentId = req.params.id;
   const { title, type, amount, status, pdfFile, devisId } = req.body;
@@ -611,10 +589,10 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     const updated = await prisma.document.update({
       where: { id: documentId },
       data: {
-        title: title !== undefined ? title : undefined,
-        type: type !== undefined ? type : undefined,
-        amount: amount !== undefined ? parseFloat(amount) : undefined,
-        status: status !== undefined ? status : undefined,
+        title,
+        type,
+        amount,
+        status,
         pdfUrl: finalPdfUrl,
         devisId: devisId !== undefined ? (devisId || null) : undefined,
       },

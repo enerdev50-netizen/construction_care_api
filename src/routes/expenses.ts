@@ -3,6 +3,8 @@ import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
 import { uploadBase64ToS3 } from '../s3';
 import { syncDevisStatus } from '../devis_sync';
+import { validateBody } from '../utils/validate';
+import { createExpenseSchema, updateExpenseSchema, updateExpenseStatusSchema } from './expenses.schemas';
 
 const router = Router();
 
@@ -38,15 +40,12 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
 });
 
 // Ajouter une nouvelle dépense
-router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateToken as any, validateBody(createExpenseSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const { projectId, amount, category, description, date, beneficiaryId, devisId, receiptFile } = req.body;
 
-  if (!projectId || !amount || !category || !description) {
-    return res.status(400).json({ error: 'Champs obligatoires manquants.' });
-  }
-
-  const expenseDate = date ? new Date(date) : new Date();
+  // Règle métier (non redondante avec la validation de forme) : une dépense ne peut pas être future.
+  const expenseDate = date ?? new Date();
   const today = new Date();
   today.setHours(23, 59, 59, 999);
   if (expenseDate > today) {
@@ -76,7 +75,7 @@ router.post('/', authenticateToken as any, async (req: AuthenticatedRequest, res
     const expense = await prisma.expense.create({
       data: {
         projectId,
-        amount: parseFloat(amount),
+        amount,
         category,
         description,
         date: expenseDate,
@@ -208,7 +207,7 @@ router.delete('/:id', authenticateToken as any, async (req: AuthenticatedRequest
 });
 
 // Modifier une dépense
-router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id', authenticateToken as any, validateBody(updateExpenseSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
   const expenseId = req.params.id;
   const { amount, category, description, date, beneficiaryId, devisId, receiptFile } = req.body;
@@ -225,12 +224,11 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       return res.status(404).json({ error: 'Dépense introuvable.' });
     }
 
-    let expenseDate = undefined;
+    // Règle métier (non redondante avec la validation de forme) : une dépense ne peut pas être future.
     if (date !== undefined) {
-      expenseDate = date ? new Date(date) : new Date();
       const today = new Date();
       today.setHours(23, 59, 59, 999);
-      if (expenseDate > today) {
+      if (date > today) {
         return res.status(400).json({ error: 'La date de la dépense ne peut pas être dans le futur.' });
       }
     }
@@ -248,10 +246,10 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
     const updated = await prisma.expense.update({
       where: { id: expenseId },
       data: {
-        amount: amount !== undefined ? parseFloat(amount) : undefined,
-        category: category !== undefined ? category : undefined,
-        description: description !== undefined ? description : undefined,
-        date: expenseDate !== undefined ? expenseDate : undefined,
+        amount,
+        category,
+        description,
+        date,
         beneficiaryId: beneficiaryId !== undefined ? (beneficiaryId || null) : undefined,
         devisId: devisId !== undefined ? (devisId || null) : undefined,
         receiptUrl: finalReceiptUrl,
@@ -269,7 +267,7 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       },
       data: {
         title: newDocTitle,
-        amount: amount !== undefined ? parseFloat(amount) : undefined,
+        amount,
         devisId: devisId !== undefined ? (devisId || null) : undefined,
       }
     });
@@ -287,18 +285,10 @@ router.put('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
 });
 
 // Mettre à jour le statut d'une dépense (ex: marquer comme PAYE ou PAYE_CLIENT)
-router.put('/:id/status', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id/status', authenticateToken as any, validateBody(updateExpenseStatusSchema), async (req: AuthenticatedRequest, res: Response) => {
   const expenseId = req.params.id;
   const { status, paidAmount } = req.body;
   const companyId = req.user?.companyId;
-
-  if (!status) {
-    return res.status(400).json({ error: 'Le statut est requis.' });
-  }
-
-  if (!['EN_ATTENTE', 'PAYE_CLIENT', 'PAYE'].includes(status)) {
-    return res.status(400).json({ error: 'Statut invalide.' });
-  }
 
   // Contrôle de Rôle : le client ne peut que déclarer son paiement, pas le valider.
   if (req.user?.role === 'CLIENT' && status === 'PAYE') {
@@ -322,7 +312,7 @@ router.put('/:id/status', authenticateToken as any, async (req: AuthenticatedReq
     let docStatus = 'EN_ATTENTE';
 
     if (status === 'PAYE') {
-      const valPaid = paidAmount !== undefined ? parseFloat(paidAmount) : amountVal;
+      const valPaid = paidAmount !== undefined ? paidAmount : amountVal;
       finalPaidAmount = Math.min(valPaid, amountVal);
       docStatus = finalPaidAmount < amountVal ? 'PAYE_PARTIEL' : 'PAYE';
     } else if (status === 'PAYE_CLIENT') {
