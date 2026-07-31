@@ -34,12 +34,34 @@ if [ "${RUN_DB_MIGRATE:-true}" = "true" ]; then
 
       # Remise à zéro explicite, réservée aux bases jetables (DEV).
       #
-      # Sûreté : cette branche n'est atteignable QUE sur une base dépourvue de
-      # table `_prisma_migrations`, c'est-à-dire une base qui n'a jamais été
-      # gérée par les migrations. Une base correctement déployée via
-      # `migrate deploy` possède cet historique et ne peut donc pas déclencher
-      # P3005 — le reset y est structurellement inatteignable. Il faut en plus
-      # positionner explicitement la variable ci-dessous.
+      # Sûreté (défense en profondeur, deux couches indépendantes) :
+      #   1. cette branche n'est atteignable QUE sur une base dépourvue de
+      #      table `_prisma_migrations`, c'est-à-dire une base qui n'a jamais
+      #      été gérée par les migrations. Une base correctement déployée via
+      #      `migrate deploy` possède cet historique et ne peut donc pas
+      #      déclencher P3005 — le reset y est structurellement inatteignable ;
+      #   2. VERROU EN DUR : quelle que soit la variable ci-dessous, un reset
+      #      est REFUSÉ si NODE_ENV=production. La production a été déployée
+      #      le 2026-07-28 avec l'ancien entrypoint (`db push`) : elle est
+      #      elle aussi susceptible de heurter P3005 à son premier déploiement
+      #      sur `migrate deploy`, mais peut désormais contenir de vraies
+      #      données. Un copier-coller de configuration entre applications
+      #      Dokploy ne doit jamais pouvoir la vider.
+      if [ "${NODE_ENV:-}" = "production" ]; then
+        echo ""
+        echo "════════════════════════════════════════════════════════════════"
+        echo "  REFUS : NODE_ENV=production — la remise à zéro automatique est"
+        echo "  désactivée en dur sur cet environnement, quelle que soit la"
+        echo "  configuration de DB_RESET_ON_P3005."
+        echo ""
+        echo "  Cette base peut contenir des données réelles. Suivre DEPLOY.md,"
+        echo "  section « Base existante créée par db push » — sauvegarde,"
+        echo "  comparaison de schéma, migration de rattrapage. NE JAMAIS la"
+        echo "  recréer sans avoir vérifié ce qu'elle contient."
+        echo "════════════════════════════════════════════════════════════════"
+        exit 1
+      fi
+
       if [ "${DB_RESET_ON_P3005:-false}" = "true" ]; then
         echo ""
         echo "⚠️  DB_RESET_ON_P3005=true → REMISE À ZÉRO de la base."

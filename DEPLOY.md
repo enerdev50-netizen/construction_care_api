@@ -43,6 +43,10 @@ Les deux étapes sont **idempotentes** : les cumuler est sans risque. Pour n'en 
 
 **Cause :** un déploiement antérieur à l'introduction des migrations versionnées utilisait `prisma db push`. Les tables existent, mais la table d'historique `_prisma_migrations` est absente : `migrate deploy` refuse d'agir sur une base dont il ne connaît pas l'état.
 
+> ⚠️ **Ceci concerne aussi la PRODUCTION, vérifié et non hypothétique.** La CI a exécuté deux déploiements réussis sur `main` le 2026-07-28 (commits `6d9dcd6` et `612347a`), avec l'ancien entrypoint `db push`. La base de production est donc très probablement dans le même état que la base DEV décrite ci-dessus — sauf qu'elle est en service depuis cette date et peut contenir de vraies données. **Avant tout merge `develop → staging → main` de ce correctif**, vérifier concrètement le contenu de la base de production (nombre d'entreprises, d'utilisateurs, de chantiers réels) : si elle contient des données réelles, suivre impérativement le chemin « base avec données réelles » ci-dessous, jamais un reset.
+>
+> L'entrypoint refuse structurellement tout reset quand `NODE_ENV=production`, y compris si `DB_RESET_ON_P3005` était positionnée par erreur (copier-coller de configuration entre applications Dokploy) : deux couches de protection indépendantes.
+
 ### Ne pas baseliner à l'aveugle
 
 La tentation est de marquer les migrations comme déjà appliquées :
