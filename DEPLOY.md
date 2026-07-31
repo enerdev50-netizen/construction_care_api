@@ -58,15 +58,17 @@ npx prisma migrate resolve --applied 20260729163228_init_mysql
 
 ### Choisir selon la base concernée
 
-**Base DEV, sans donnée à conserver** — recréer proprement le schéma :
+**Base DEV, sans donnée à conserver** — remise à zéro depuis le conteneur, sans accès shell :
 
-```bash
-# ⚠️ DESTRUCTIF : supprime toutes les données de la base visée.
-npx prisma migrate reset --force --skip-seed
-npx prisma migrate deploy
-```
+1. Dans Dokploy, ajouter la variable d'environnement `DB_RESET_ON_P3005=true` sur l'application **DEV**.
+2. Redéployer. L'entrypoint recrée le schéma à partir des migrations versionnées.
+3. **Retirer la variable** immédiatement après.
 
-Le prochain démarrage du conteneur recréera automatiquement les 3 forfaits et le Super Administrateur via `src/bootstrap/`.
+> ⚠️ Cette variable supprime **toutes** les données de la base visée. Ne jamais la laisser en place, ni la positionner sur l'application de production.
+>
+> Sûreté par construction : cette branche n'est atteignable que sur une base dépourvue de `_prisma_migrations`, c'est-à-dire jamais gérée par les migrations. Une base correctement déployée possède cet historique et ne peut donc pas déclencher P3005 — le reset y est structurellement inatteignable, même si la variable traînait.
+
+Le démarrage suivant recrée automatiquement les 3 forfaits et le Super Administrateur via `src/bootstrap/`.
 
 **Base contenant des données réelles** — ne rien exécuter à l'aveugle :
 
