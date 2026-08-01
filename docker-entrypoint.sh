@@ -34,37 +34,21 @@ if [ "${RUN_DB_MIGRATE:-true}" = "true" ]; then
 
       # Remise à zéro explicite, réservée aux bases jetables (DEV).
       #
-      # Sûreté (défense en profondeur, deux couches indépendantes) :
-      #   1. cette branche n'est atteignable QUE sur une base dépourvue de
-      #      table `_prisma_migrations`, c'est-à-dire une base qui n'a jamais
-      #      été gérée par les migrations. Une base correctement déployée via
-      #      `migrate deploy` possède cet historique et ne peut donc pas
-      #      déclencher P3005 — le reset y est structurellement inatteignable ;
-      #   2. VERROU EN DUR : quelle que soit la variable ci-dessous, un reset
-      #      est REFUSÉ si NODE_ENV=production. La production a été déployée
-      #      le 2026-07-28 avec l'ancien entrypoint (`db push`) : elle est
-      #      elle aussi susceptible de heurter P3005 à son premier déploiement
-      #      sur `migrate deploy`, mais peut désormais contenir de vraies
-      #      données. Un copier-coller de configuration entre applications
-      #      Dokploy ne doit jamais pouvoir la vider.
-      if [ "${NODE_ENV:-}" = "production" ]; then
-        echo ""
-        echo "════════════════════════════════════════════════════════════════"
-        echo "  REFUS : NODE_ENV=production — la remise à zéro automatique est"
-        echo "  désactivée en dur sur cet environnement, quelle que soit la"
-        echo "  configuration de DB_RESET_ON_P3005."
-        echo ""
-        echo "  Cette base peut contenir des données réelles. Suivre DEPLOY.md,"
-        echo "  section « Base existante créée par db push » — sauvegarde,"
-        echo "  comparaison de schéma, migration de rattrapage. NE JAMAIS la"
-        echo "  recréer sans avoir vérifié ce qu'elle contient."
-        echo "════════════════════════════════════════════════════════════════"
-        exit 1
-      fi
+      # Sûreté : la confirmation exigée est le NOM EXACT de la base ciblée
+      # (extrait de DATABASE_URL), pas un simple booléen. `NODE_ENV=production`
+      # s'est révélé être un signal peu fiable en pratique : l'application DEV
+      # de Dokploy le positionne aussi (pour couper les logs SQL verbeux, cf.
+      # src/prisma.ts), ce qui bloquait à tort un reset DEV légitime. Exiger le
+      # nom de la base rend un copier-coller de configuration entre
+      # applications Dokploy sans danger : `DB_RESET_ON_P3005=construction`
+      # copié tel quel sur une application dont la base s'appelle autrement ne
+      # correspond à rien et ne déclenche rien.
+      DB_NAME=${DATABASE_URL##*/}
+      DB_NAME=${DB_NAME%%\?*}
 
-      if [ "${DB_RESET_ON_P3005:-false}" = "true" ]; then
+      if [ -n "$DB_NAME" ] && [ "${DB_RESET_ON_P3005:-}" = "$DB_NAME" ]; then
         echo ""
-        echo "⚠️  DB_RESET_ON_P3005=true → REMISE À ZÉRO de la base."
+        echo "⚠️  DB_RESET_ON_P3005 correspond au nom de la base ($DB_NAME) → REMISE À ZÉRO."
         echo "⚠️  Toutes les données existantes vont être supprimées."
         npx prisma migrate reset --force --skip-seed --skip-generate
         echo "✓ Base recréée à partir des migrations versionnées."
@@ -76,8 +60,10 @@ if [ "${RUN_DB_MIGRATE:-true}" = "true" ]; then
         echo "  La base contient des tables mais aucun historique de migrations"
         echo "  (état typique d'un déploiement antérieur via 'prisma db push')."
         echo ""
-        echo "  → Base DEV sans donnée à conserver : ajouter la variable"
-        echo "    DB_RESET_ON_P3005=true, redéployer une fois, puis la retirer."
+        echo "  → Base jetable (DEV), sans donnée à conserver : ajouter la"
+        echo "    variable DB_RESET_ON_P3005=${DB_NAME:-<nom_de_la_base>} — le"
+        echo "    nom EXACT de la base, pas juste 'true' — redéployer une"
+        echo "    fois, puis la retirer."
         echo ""
         echo "  → Base contenant des données réelles : NE PAS faire cela."
         echo "    Suivre DEPLOY.md, section « Base existante créée par db push »"
