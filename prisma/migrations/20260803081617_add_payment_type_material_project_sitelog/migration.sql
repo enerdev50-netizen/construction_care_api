@@ -1,8 +1,8 @@
 -- AlterTable
-ALTER TABLE `material` ADD COLUMN `projectId` VARCHAR(36) NULL;
+ALTER TABLE `Material` ADD COLUMN `projectId` VARCHAR(36) NULL;
 
 -- AlterTable
-ALTER TABLE `payment` ADD COLUMN `type` VARCHAR(20) NOT NULL DEFAULT 'ACHATS';
+ALTER TABLE `Payment` ADD COLUMN `type` VARCHAR(20) NOT NULL DEFAULT 'ACHATS';
 
 -- CreateTable
 CREATE TABLE `SiteLogEntry` (
