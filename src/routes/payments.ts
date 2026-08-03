@@ -9,7 +9,7 @@
 import { Router, Request, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
-import { syncDevisStatus, syncExpenseFromDocument } from '../devis_sync';
+import { syncDevisStatus } from '../devis_sync';
 import { ValidationError, parsePositiveInt } from '../utils/validation';
 import {
   MOBILE_MONEY_PROVIDERS,
@@ -307,14 +307,13 @@ async function approveTransaction(fedapayId: number, fedapayTransaction: any): P
     });
   });
 
-  // Hors transaction : réutilise la synchronisation existante (devis/dépenses),
+  // Hors transaction : réutilise la synchronisation existante du devis parent,
   // même flux que la validation manuelle d'un paiement.
   const mmTransaction = await prisma.mobileMoneyTransaction.findUnique({
     where: { fedapayId },
     include: { document: true },
   });
   if (mmTransaction) {
-    await syncExpenseFromDocument(mmTransaction.documentId);
     await syncDevisStatus(mmTransaction.document.devisId);
   }
 }

@@ -3,7 +3,7 @@ import { app, request, prisma, createTenant, cleanupTestData, Tenant } from './h
 
 /**
  * Régression P1-4 : validation systématique des entrées (zod) sur les routes
- * projects/expenses/materials/documents/users/auth. Couvre spécifiquement les
+ * projects/materials/documents/users/auth. Couvre spécifiquement les
  * lacunes fermées listées dans Docs/PRD/2026-07-30_validation-entrees-zod.md,
  * ainsi qu'une poignée de requêtes valides pour garantir la non-régression.
  */
@@ -54,28 +54,6 @@ describe('Validation des entrées — régression (P1-4)', () => {
         name: 'vitest-iso-validate-date',
         startDate: 'pas-une-date',
         endDate: '2026-12-31',
-      });
-      expect(res.status).toBe(400);
-    });
-  });
-
-  describe('expenses', () => {
-    it('montant non numérique → 400 (était 500 : NaN transmis à Prisma)', async () => {
-      const res = await asTenant(request(app).post('/expenses')).send({
-        projectId: tenant.projectId,
-        amount: 'abc',
-        category: 'CIMENT',
-        description: 'Test validation',
-      });
-      expect(res.status).toBe(400);
-    });
-
-    it('catégorie hors énumération → 400 (était accepté sans contrôle)', async () => {
-      const res = await asTenant(request(app).post('/expenses')).send({
-        projectId: tenant.projectId,
-        amount: 1000,
-        category: 'CATEGORIE_INEXISTANTE',
-        description: 'Test validation',
       });
       expect(res.status).toBe(400);
     });

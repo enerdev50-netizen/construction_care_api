@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
 import { validateBody } from '../utils/validate';
-import { getProjectFinancials } from '../utils/project_financials';
+import { getProjectFinancials, getProjectsFinancialsBatch } from '../utils/project_financials';
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -35,7 +35,6 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
           company: true,
           assignments: { include: { user: true } },
           tasks: true,
-          expenses: true,
         },
       });
     } else if (role === 'COMPANY_ADMIN') {
@@ -46,7 +45,6 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
           company: true,
           assignments: { include: { user: true } },
           tasks: true,
-          expenses: true,
         },
       });
     } else if (role === 'CLIENT') {
@@ -61,7 +59,6 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
         include: {
           company: true,
           tasks: true,
-          expenses: true,
           assignments: { include: { user: true } },
         }
       });
@@ -77,13 +74,17 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
         include: {
           company: true,
           tasks: true,
-          expenses: true,
           assignments: { include: { user: true } },
         },
       });
     }
 
-    res.json(projects);
+    const financialsByProject = await getProjectsFinancialsBatch(
+      projects.map((p) => ({ id: p.id, budget: p.budget }))
+    );
+    const projectsWithFinancials = projects.map((p) => ({ ...p, ...financialsByProject[p.id] }));
+
+    res.json(projectsWithFinancials);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération des chantiers.' });
@@ -103,12 +104,8 @@ router.get('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
         tasks: {
           orderBy: { createdAt: 'asc' }
         },
-        expenses: {
-          orderBy: { date: 'desc' }
-        },
         documents: {
           include: {
-            expenses: true,
             factures: true,
           },
           orderBy: { createdAt: 'desc' }

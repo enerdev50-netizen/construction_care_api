@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
 import { uploadBase64ToS3 } from '../s3';
-import { syncDevisStatus, syncExpenseFromDocument } from '../devis_sync';
+import { syncDevisStatus } from '../devis_sync';
 import { validateBody } from '../utils/validate';
 import {
   createDocumentSchema,
@@ -51,11 +51,6 @@ router.get('/client-docs', authenticateToken as any, async (req: AuthenticatedRe
         },
         factures: {
           select: { id: true, title: true, amount: true, status: true, createdAt: true },
-        },
-        expenses: {
-          include: {
-            beneficiary: { select: { firstName: true, lastName: true } },
-          },
         },
         payments: {
           orderBy: { createdAt: 'desc' },
@@ -110,11 +105,6 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
         },
         factures: {
           select: { id: true, title: true, amount: true, status: true, createdAt: true },
-        },
-        expenses: {
-          include: {
-            beneficiary: { select: { firstName: true, lastName: true } },
-          },
         },
         payments: {
           orderBy: { createdAt: 'desc' },
@@ -331,7 +321,6 @@ router.put('/:id/status', authenticateToken as any, validateBody(documentStatusS
       },
     });
 
-    await syncExpenseFromDocument(updatedDocument.id);
     await syncDevisStatus(updatedDocument.devisId);
 
     res.json({ message: 'Statut mis à jour avec succès.', document: updatedDocument });
@@ -498,7 +487,6 @@ router.post('/:id/record-payment', authenticateToken as any, validateBody(paymen
       },
     });
 
-    await syncExpenseFromDocument(updatedDocument.id);
     await syncDevisStatus(updatedDocument.devisId);
 
     res.json({
@@ -524,11 +512,6 @@ router.get('/:id/pdf', authenticateToken as any, async (req: AuthenticatedReques
         project: {
           include: {
             company: true,
-          },
-        },
-        expenses: {
-          include: {
-            beneficiary: { select: { firstName: true, lastName: true } },
           },
         },
         factures: true,

@@ -6,7 +6,6 @@ import cookieParser from 'cookie-parser';
 import authRouter from './routes/auth';
 import usersRouter from './routes/users';
 import projectsRouter from './routes/projects';
-import expensesRouter from './routes/expenses';
 import materialsRouter from './routes/materials';
 import documentsRouter from './routes/documents';
 import progressRouter from './routes/progress';
@@ -68,7 +67,6 @@ app.get('/', (req, res) => {
 app.use('/auth', authLimiter, authRouter);
 app.use('/users', usersRouter);
 app.use('/projects', projectsRouter);
-app.use('/expenses', expensesRouter);
 app.use('/materials', materialsRouter);
 app.use('/documents', documentsRouter);
 app.use('/progress', progressRouter);
