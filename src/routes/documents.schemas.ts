@@ -3,6 +3,7 @@ import { requiredString, nonNegativeNumber, positiveNumber } from '../utils/vali
 
 const DOCUMENT_TYPES = ['DEVIS', 'FACTURE'] as const;
 export const DOCUMENT_STATUSES = ['EN_ATTENTE', 'SIGNE', 'PAYE_CLIENT', 'PAYE_PARTIEL', 'PAYE'] as const;
+export const PAYMENT_TYPES = ['MAIN_DOEUVRE', 'ACHATS'] as const;
 
 export const createDocumentSchema = z.object({
   projectId: requiredString('Le chantier est obligatoire.'),
@@ -20,10 +21,12 @@ export const signDocumentSchema = z.object({
 export const documentStatusSchema = z.object({
   status: z.enum(DOCUMENT_STATUSES, { error: 'Statut invalide.' }),
   declaredPaidAmount: nonNegativeNumber('Le montant déclaré doit être un nombre positif.').optional(),
+  type: z.enum(PAYMENT_TYPES, { error: 'Type de paiement invalide.' }).optional(),
 });
 
 export const paymentAmountSchema = z.object({
   amount: positiveNumber('Le montant du versement doit être supérieur à 0.'),
+  type: z.enum(PAYMENT_TYPES, { error: 'Type de paiement invalide.' }),
 });
 
 // Contrairement à `documentStatusSchema` (route dédiée /:id/status), cette route

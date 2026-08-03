@@ -287,6 +287,7 @@ router.put('/:id/status', authenticateToken as any, validateBody(documentStatusS
             data: {
               documentId,
               amount: remaining,
+              type: req.body.type || 'ACHATS',
               status: 'VALIDE',
               createdByUserId: req.user!.id,
               validatedByUserId: req.user!.id,
@@ -345,7 +346,7 @@ router.put('/:id/status', authenticateToken as any, validateBody(documentStatusS
 // [CLIENT] Déclarer un paiement partiel ou total sur une facture (en attente de validation gérant)
 router.post('/:id/client-declare-payment', authenticateToken as any, validateBody(paymentAmountSchema), async (req: AuthenticatedRequest, res: Response) => {
   const documentId = req.params.id;
-  const { amount: versement } = req.body;
+  const { amount: versement, type: paymentType } = req.body;
   const userId = req.user?.id;
   const companyId = req.user?.companyId;
 
@@ -396,6 +397,7 @@ router.post('/:id/client-declare-payment', authenticateToken as any, validateBod
       data: {
         documentId,
         amount: declaredAmount,
+        type: paymentType,
         status: 'EN_ATTENTE',
         createdByUserId: req.user!.id,
       },
@@ -436,7 +438,7 @@ router.post('/:id/client-declare-payment', authenticateToken as any, validateBod
 // Enregistrer un paiement (partiel ou total) sur une facture existante (GÉRANT / CHEF uniquement)
 router.post('/:id/record-payment', authenticateToken as any, validateBody(paymentAmountSchema), async (req: AuthenticatedRequest, res: Response) => {
   const documentId = req.params.id;
-  const { amount: versement } = req.body;
+  const { amount: versement, type: paymentType } = req.body;
   const companyId = req.user?.companyId;
 
   if (req.user?.role === 'CLIENT' || req.user?.role === 'WORKER') {
@@ -470,6 +472,7 @@ router.post('/:id/record-payment', authenticateToken as any, validateBody(paymen
       data: {
         documentId,
         amount: versement,
+        type: paymentType,
         status: 'VALIDE',
         createdByUserId: req.user!.id,
         validatedByUserId: req.user!.id,

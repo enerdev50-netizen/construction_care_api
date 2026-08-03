@@ -39,7 +39,7 @@ describe('Isolation multi-tenant', () => {
     const res = await request(app)
       .post(`/documents/${B.documentId}/client-declare-payment`)
       .set('Authorization', `Bearer ${A.token}`)
-      .send({ amount: 100 });
+      .send({ amount: 100, type: 'ACHATS' });
     expect(res.status).toBe(404);
   });
 });

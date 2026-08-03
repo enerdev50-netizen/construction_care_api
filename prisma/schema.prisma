@@ -53,6 +53,7 @@ model User {
   createdPayments   Payment[] @relation("PaymentCreatedBy")
   validatedPayments Payment[] @relation("PaymentValidatedBy")
   mobileMoneyTransactions MobileMoneyTransaction[]
+  siteLogEntries SiteLogEntry[]
 
   @@index([companyId])
 }
@@ -78,8 +79,10 @@ model Project {
   expenses    Expense[]
   progressLogs ProgressPhoto[]
   tasks       Task[]
+  materials   Material[]
   movements   MaterialMovement[]
   documents   Document[]
+  siteLogEntries SiteLogEntry[]
 
   @@index([companyId])
 }
@@ -151,6 +154,8 @@ model Material {
   id            String   @id @default(uuid()) @db.VarChar(36)
   companyId     String   @db.VarChar(36)
   company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  projectId     String?  @db.VarChar(36) // chantier propriétaire ; null = matériau partagé entreprise (legacy, avant scoping par chantier)
+  project       Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name          String   @db.VarChar(191) // e.g. "Ciment", "Sable"
   stock         Float    @default(0)
   minStockAlert Float    @default(5)
@@ -161,6 +166,7 @@ model Material {
   movements     MaterialMovement[]
 
   @@index([companyId])
+  @@index([projectId])
 }
 
 model MaterialMovement {
@@ -210,6 +216,7 @@ model Payment {
   documentId        String   @db.VarChar(36)
   document          Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
   amount            Float
+  type              String   @default("ACHATS") @db.VarChar(20) // "MAIN_DOEUVRE", "ACHATS"
   status            String   @default("EN_ATTENTE") @db.VarChar(20) // "EN_ATTENTE", "VALIDE"
   createdAt         DateTime @default(now())
 
@@ -260,6 +267,22 @@ model OTPVerification {
   code      String   @db.VarChar(10)
   expiresAt DateTime
   createdAt DateTime @default(now())
+}
+
+// Cahier des charges : journal quotidien de chantier — une checklist de ce qui a été fait, par date.
+model SiteLogEntry {
+  id          String   @id @default(uuid()) @db.VarChar(36)
+  projectId   String   @db.VarChar(36)
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  date        DateTime @db.Date
+  items       Json     // [{ label: string, done: boolean }]
+  createdById String?  @db.VarChar(36)
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([projectId, date])
+  @@index([projectId])
 }
 
 model SubscriptionConfig {

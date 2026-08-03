@@ -12,6 +12,7 @@ import documentsRouter from './routes/documents';
 import progressRouter from './routes/progress';
 import superadminRouter from './routes/superadmin';
 import paymentsRouter from './routes/payments';
+import sitelogRouter from './routes/sitelog';
 import { authLimiter, globalLimiter } from './middleware/rateLimit';
 
 const app = express();
@@ -73,6 +74,7 @@ app.use('/documents', documentsRouter);
 app.use('/progress', progressRouter);
 app.use('/superadmin', superadminRouter);
 app.use('/payments', paymentsRouter);
+app.use('/sitelog', sitelogRouter);
 
 // 404 JSON pour toute route non trouvée (au lieu du HTML Express par défaut)
 app.use((req, res) => {

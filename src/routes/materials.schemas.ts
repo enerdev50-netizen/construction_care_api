@@ -5,6 +5,7 @@ const MOVEMENT_TYPES = ['ENTREE', 'SORTIE'] as const;
 
 export const createMaterialSchema = z.object({
   name: requiredString('Le nom du matériau est obligatoire.'),
+  projectId: z.string().optional().nullable(),
   minStockAlert: nonNegativeNumber("Le seuil d'alerte doit être un nombre positif.").optional(),
   unit: z.string().optional(),
   initialStock: nonNegativeNumber('Le stock initial doit être un nombre positif.').optional(),

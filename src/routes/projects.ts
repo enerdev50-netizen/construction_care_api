@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { prisma } from '../prisma';
 import { AuthenticatedRequest, authenticateToken } from '../middleware/auth';
 import { validateBody } from '../utils/validate';
+import { getProjectFinancials } from '../utils/project_financials';
 import {
   createProjectSchema,
   updateProjectSchema,
@@ -127,7 +128,9 @@ router.get('/:id', authenticateToken as any, async (req: AuthenticatedRequest, r
       return res.status(404).json({ error: 'Chantier introuvable.' });
     }
 
-    res.json(project);
+    const financials = await getProjectFinancials(projectId, project.budget);
+
+    res.json({ ...project, ...financials });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération du chantier.' });

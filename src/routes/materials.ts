@@ -6,13 +6,18 @@ import { createMaterialSchema, movementSchema, updateMaterialSchema } from './ma
 
 const router = Router();
 
-// Récupérer tout le stock de matériaux de l'entreprise (inclut l'indicateur d'alerte)
+// Récupérer le stock de matériaux de l'entreprise (inclut l'indicateur d'alerte)
+// Filtrable par chantier (?projectId=...) : chaque chantier gère ses propres matériaux.
 router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
+  const { projectId } = req.query;
 
   try {
     const materials = await prisma.material.findMany({
-      where: { companyId: companyId! },
+      where: {
+        companyId: companyId!,
+        projectId: projectId ? String(projectId) : undefined,
+      },
       orderBy: { name: 'asc' },
     });
 
@@ -28,15 +33,25 @@ router.get('/', authenticateToken as any, async (req: AuthenticatedRequest, res:
   }
 });
 
-// Ajouter un nouveau matériau en inventaire
+// Ajouter un nouveau matériau en inventaire (rattaché à un chantier, ou partagé si projectId absent)
 router.post('/', authenticateToken as any, validateBody(createMaterialSchema), async (req: AuthenticatedRequest, res: Response) => {
   const companyId = req.user?.companyId;
-  const { name, minStockAlert, unit, initialStock } = req.body;
+  const { name, projectId, minStockAlert, unit, initialStock } = req.body;
 
   try {
+    if (projectId) {
+      const project = await prisma.project.findFirst({
+        where: { id: projectId, companyId: companyId ?? undefined },
+      });
+      if (!project) {
+        return res.status(404).json({ error: 'Chantier introuvable.' });
+      }
+    }
+
     const material = await prisma.material.create({
       data: {
         companyId: companyId!,
+        projectId: projectId || null,
         name,
         minStockAlert: minStockAlert ?? 5,
         unit: unit || 'sacs',
